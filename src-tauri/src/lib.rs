@@ -8,9 +8,9 @@
 //! - Tauri command handlers for frontend communication
 
 mod capture;
-mod llm;
+pub mod llm;
 mod ocr;
-mod safety;
+pub mod safety;
 mod tray;
 
 use capture::CaptureState;

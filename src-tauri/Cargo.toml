@@ -48,6 +48,10 @@ windows = { version = "0.58", features = [
 # Optimize image-heavy crates in dev builds.
 # Without this, to_rgb8() and PNG encoding take ~1800ms in debug mode
 # vs ~100ms with optimizations. Our own code stays debuggable.
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+# Optimize image-heavy crates in dev builds.
 [profile.dev.package.image]
 opt-level = 2
 

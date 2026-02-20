@@ -77,12 +77,30 @@ Respond with ONLY this JSON structure. No other text.
 /// Builds the XML-wrapped user message for the CLASSIFY pipeline.
 ///
 /// Format from LLM Integration PRD Section 3.
+/// If `plugin_tools` is non-empty, it's injected as an `<available_plugins>`
+/// block so the LLM can include plugin actions in the ActionMenu.
 pub fn build_classify_message(
     text: &str,
     confidence: f64,
     has_table: bool,
     has_code: bool,
+    plugin_tools: &str,
 ) -> String {
+    let plugins_block = if plugin_tools.is_empty() {
+        String::new()
+    } else {
+        format!(
+            r#"
+
+<available_plugins>
+IMPORTANT: The following plugin actions are installed. You MUST include at least one of them
+in the actions array of your response, using the exact id, label, and icon shown.
+Each plugin action has requiresExecution: true.
+
+{plugin_tools}</available_plugins>"#
+        )
+    };
+
     format!(
         r#"<snip_context>
   <source_app>unknown</source_app>
@@ -95,6 +113,6 @@ pub fn build_classify_message(
 
 <extracted_text>
 {text}
-</extracted_text>"#
+</extracted_text>{plugins_block}"#
     )
 }

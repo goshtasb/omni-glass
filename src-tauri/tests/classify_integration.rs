@@ -44,7 +44,7 @@ ModuleNotFoundError: No module named 'pandas'"#;
 
     eprintln!("[TEST] Calling classify with {} chars...", ocr_text.len());
     let start = std::time::Instant::now();
-    let menu = classify(ocr_text, false, false, 0.95).await;
+    let menu = classify(ocr_text, false, false, 0.95, "").await;
     let latency = start.elapsed().as_millis();
 
     eprintln!("[TEST] Classify returned in {}ms", latency);
@@ -80,7 +80,7 @@ ModuleNotFoundError: No module named 'pandas'"#;
 async fn test_classify_empty_text_returns_fallback() {
     load_env();
 
-    let menu = classify("", false, false, 0.0).await;
+    let menu = classify("", false, false, 0.0, "").await;
     assert_eq!(menu.summary, "Could not analyze content");
     assert_eq!(menu.content_type, "unknown");
 }

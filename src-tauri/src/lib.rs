@@ -12,6 +12,7 @@
 mod capture;
 mod commands;
 pub mod llm;
+pub mod mcp;
 mod ocr;
 mod pipeline;
 pub mod safety;
@@ -19,6 +20,8 @@ pub mod settings_commands;
 mod tray;
 
 use capture::CaptureState;
+use mcp::ToolRegistry;
+use tauri::Manager;
 
 /// Entry point — called by Tauri runtime.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -47,6 +50,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(CaptureState::new())
         .manage(llm::ActionMenuState::new())
+        .manage(ToolRegistry::new())
         .invoke_handler(tauri::generate_handler![
             // Simple commands (commands.rs)
             commands::crop_region,
@@ -84,6 +88,15 @@ pub fn run() {
             );
 
             tray::setup_tray(app.handle())?;
+
+            // Load MCP plugins asynchronously (non-blocking).
+            // Register built-in tools first, then scan for external plugins.
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                let registry = handle.state::<ToolRegistry>();
+                mcp::builtins::register_builtins(&registry).await;
+                mcp::loader::load_plugins(&registry).await;
+            });
 
             log::info!("System tray initialized — ready for snips");
             Ok(())

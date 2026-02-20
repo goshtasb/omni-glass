@@ -7,7 +7,7 @@ use tauri::{
     image::Image as TauriImage,
     menu::{MenuBuilder, MenuItemBuilder},
     tray::TrayIconBuilder,
-    AppHandle, Emitter, Manager,
+    AppHandle, Manager,
 };
 
 /// Sets up the system tray icon with a click handler.
@@ -93,33 +93,42 @@ fn start_snip_mode(
         capture_us as f64 / 1000.0
     );
 
-    // Step 2: Write raw RGBA pixels to temp BMP file.
-    // BMP = headers + raw pixels, no compression. ~32MB for Retina but
-    // it's a local file write, not a network transfer. This replaces
-    // PNG (2.6s) and JPEG (3.2s) encoding that was killing latency.
-    // PERF: Replace BMP temp file with shared memory buffer. 32MB disk
-    // write is acceptable for spike, not for production.
-    let temp_path = std::env::temp_dir().join("omni-glass-capture.bmp");
+    // Step 2: Save screenshot to temp PNG file for overlay display.
+    // PNG handles RGBA natively — no to_rgb8() conversion needed.
+    // to_rgb8() is ~1800ms even with opt-level=2 due to per-pixel copy.
+    let temp_path = std::env::temp_dir().join("omni-glass-capture.png");
     screenshot
         .save(&temp_path)
-        .map_err(|e| format!("BMP save failed: {}", e))?;
+        .map_err(|e| format!("PNG save failed: {}", e))?;
+    // Canonicalize to resolve /var → /private/var symlink on macOS.
+    // Tauri's $TEMP scope resolves to the canonical path, so the
+    // asset protocol URL must also use the canonical path.
+    let temp_path = std::fs::canonicalize(&temp_path)
+        .unwrap_or(temp_path);
 
     let save_us = start.elapsed().as_micros() - capture_us;
     let file_size = std::fs::metadata(&temp_path)
         .map(|m| m.len())
         .unwrap_or(0);
     log::info!(
-        "[LATENCY] bmp_save={:.2}ms ({} bytes, {})",
+        "[LATENCY] png_save={:.2}ms ({} bytes, {})",
         save_us as f64 / 1000.0,
         file_size,
         temp_path.display()
     );
 
-    // Step 3: Store the screenshot for later cropping
+    // Step 3: Store the screenshot + capture info for the overlay to fetch.
+    // The overlay fetches this via get_capture_info command on load —
+    // no race condition since commands only execute after JS is ready.
     let state = app.state::<CaptureState>();
     *state.screenshot.lock().unwrap() = Some(screenshot);
+    *state.capture_info.lock().unwrap() = Some(capture::CaptureInfo {
+        image_path: temp_path.to_string_lossy().to_string(),
+        click_epoch_ms,
+    });
 
-    // Step 4: Create the overlay window
+    // Step 4: Create the overlay window.
+    // The overlay will call get_capture_info on load to get the screenshot path.
     let overlay_window = tauri::WebviewWindowBuilder::new(
         app,
         "overlay",
@@ -133,28 +142,23 @@ fn start_snip_mode(
     .title("Omni-Glass Overlay")
     .build()?;
 
+    // Open devtools so we can see frontend console errors
+    #[cfg(debug_assertions)]
+    overlay_window.open_devtools();
+
     let window_us = start.elapsed().as_micros() - capture_us - save_us;
     log::info!(
         "[LATENCY] window_create={:.2}ms",
         window_us as f64 / 1000.0
     );
 
-    // Step 5: Send temp file path + click timestamp to the overlay.
-    // The frontend uses convertFileSrc() to load via Tauri's asset protocol.
-    let payload = serde_json::json!({
-        "imagePath": temp_path.to_string_lossy(),
-        "clickEpochMs": click_epoch_ms,
-    });
-    overlay_window.emit("screenshot-ready", &payload)?;
-
     let total_us = start.elapsed().as_micros();
     log::info!(
-        "[LATENCY] rust_total={:.2}ms (capture={:.2} + save={:.2} + window={:.2} + emit={:.2})",
+        "[LATENCY] rust_total={:.2}ms (capture={:.2} + save={:.2} + window={:.2})",
         total_us as f64 / 1000.0,
         capture_us as f64 / 1000.0,
         save_us as f64 / 1000.0,
         window_us as f64 / 1000.0,
-        (total_us - capture_us - save_us - window_us) as f64 / 1000.0,
     );
 
     Ok(())

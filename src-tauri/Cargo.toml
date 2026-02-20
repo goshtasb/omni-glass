@@ -11,6 +11,7 @@ crate-type = ["lib", "cdylib", "staticlib"]
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
+swift-bridge-build = "0.1"
 
 [dependencies]
 tauri = { version = "2", features = ["tray-icon", "macos-private-api", "protocol-asset"] }
@@ -23,3 +24,24 @@ base64 = "0.22"
 log = "0.4"
 env_logger = "0.11"
 thiserror = "2"
+swift-bridge = "0.1"
+reqwest = { version = "0.12", features = ["json"] }
+arboard = "3"
+
+# Optimize image-heavy crates in dev builds.
+# Without this, to_rgb8() and PNG encoding take ~1800ms in debug mode
+# vs ~100ms with optimizations. Our own code stays debuggable.
+[profile.dev.package.image]
+opt-level = 2
+
+[profile.dev.package.png]
+opt-level = 2
+
+[profile.dev.package.flate2]
+opt-level = 2
+
+[profile.dev.package.miniz_oxide]
+opt-level = 2
+
+[profile.dev.package.zune-jpeg]
+opt-level = 2

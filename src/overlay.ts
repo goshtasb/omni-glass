@@ -2,15 +2,14 @@
  * Overlay module — handles the fullscreen snip interaction.
  *
  * Flow:
- * 1. Receives a base64 screenshot from Rust via Tauri event.
+ * 1. Fetches screenshot path from Rust via get_capture_info command.
  * 2. Draws it on a canvas with a 50% dark overlay.
  * 3. User drags a rectangle to select a region.
- * 4. On mouseup, sends the rectangle coordinates to Rust.
- * 5. Rust crops the screenshot and returns the result.
+ * 4. On mouseup, sends the rectangle coordinates to Rust via process_snip.
+ * 5. Rust crops → OCR → LLM → opens action menu.
  */
 
 import { invoke, convertFileSrc } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
 
 interface SelectionRect {
   startX: number;
@@ -19,34 +18,48 @@ interface SelectionRect {
   endY: number;
 }
 
+interface CaptureInfo {
+  image_path: string;
+  click_epoch_ms: number;
+}
+
 export function setupOverlay(): void {
   const canvas = document.getElementById("overlay-canvas") as HTMLCanvasElement;
   if (!canvas) return;
 
   const ctx = canvas.getContext("2d")!;
+  const dpr = window.devicePixelRatio || 1;
   let screenshotImage: HTMLImageElement | null = null;
   let selection: SelectionRect | null = null;
   let isDragging = false;
 
-  // Resize canvas to fill the screen
+  // Resize canvas to fill the screen at physical pixel resolution.
+  // All drawing uses CSS coordinates thanks to ctx.scale(dpr, dpr).
   function resizeCanvas(): void {
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
+    const cssW = window.innerWidth;
+    const cssH = window.innerHeight;
+    canvas.width = cssW * dpr;
+    canvas.height = cssH * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     if (screenshotImage) {
       drawOverlay();
     }
   }
 
-  // Draw the screenshot with dark overlay and selection rectangle
+  // Draw the screenshot with dark overlay and selection rectangle.
+  // All coordinates are in CSS pixels (ctx is scaled by dpr).
   function drawOverlay(): void {
     if (!screenshotImage) return;
 
-    // Draw the screenshot scaled to fill the window
-    ctx.drawImage(screenshotImage, 0, 0, canvas.width, canvas.height);
+    const cssW = window.innerWidth;
+    const cssH = window.innerHeight;
+
+    // Draw the screenshot scaled to fill the CSS viewport
+    ctx.drawImage(screenshotImage, 0, 0, cssW, cssH);
 
     // Dark overlay (50% opacity)
     ctx.fillStyle = "rgba(0, 0, 0, 0.5)";
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillRect(0, 0, cssW, cssH);
 
     // If there's an active selection, cut through the overlay
     if (selection) {
@@ -58,11 +71,14 @@ export function setupOverlay(): void {
       if (w > 0 && h > 0) {
         // Clear the dark overlay in the selected region
         ctx.clearRect(x, y, w, h);
-        // Redraw the screenshot in the selected region (no dimming)
+        // Redraw the screenshot in the selected region (no dimming).
+        // Source coords must be in the image's pixel space.
+        const imgScaleX = screenshotImage.width / cssW;
+        const imgScaleY = screenshotImage.height / cssH;
         ctx.drawImage(
           screenshotImage,
-          x, y, w, h,   // Source (screen coords map 1:1 for fullscreen)
-          x, y, w, h    // Destination
+          x * imgScaleX, y * imgScaleY, w * imgScaleX, h * imgScaleY,
+          x, y, w, h
         );
 
         // Selection border
@@ -78,7 +94,7 @@ export function setupOverlay(): void {
     }
   }
 
-  // Mouse event handlers
+  // Mouse event handlers (clientX/clientY are in CSS pixels)
   canvas.addEventListener("mousedown", (e: MouseEvent) => {
     isDragging = true;
     selection = {
@@ -117,24 +133,30 @@ export function setupOverlay(): void {
     console.log(`Selection: ${w}×${h} at (${x}, ${y})`);
 
     try {
-      // Send coordinates to Rust for cropping
-      // Scale from CSS pixels to actual screenshot pixels
-      const scale = window.devicePixelRatio || 1;
-      const croppedBase64: string = await invoke("crop_region", {
-        x: Math.round(x * scale),
-        y: Math.round(y * scale),
-        width: Math.round(w * scale),
-        height: Math.round(h * scale),
+      // Map CSS pixel coordinates to screenshot pixel coordinates.
+      // Use actual image dimensions — devicePixelRatio doesn't match the
+      // screenshot resolution on macOS scaled displays (e.g. "Looks like
+      // 1440x900" on a 2560x1600 panel gives dpr=2 but xcap captures at
+      // 2560x1600, not 2880x1800).
+      const cssW = window.innerWidth;
+      const cssH = window.innerHeight;
+      const imgW = screenshotImage?.width || cssW;
+      const imgH = screenshotImage?.height || cssH;
+      const scaleX = imgW / cssW;
+      const scaleY = imgH / cssH;
+      console.log(`[PIPELINE] Starting process_snip... scale=${scaleX.toFixed(2)}x${scaleY.toFixed(2)} img=${imgW}x${imgH} css=${cssW}x${cssH}`);
+      await invoke("process_snip", {
+        x: Math.round(x * scaleX),
+        y: Math.round(y * scaleY),
+        width: Math.round(w * scaleX),
+        height: Math.round(h * scaleY),
+        menuX: x,       // CSS pixels for action menu window position
+        menuY: y + h,    // Bottom edge of bounding box
       });
-
-      console.log(`Cropped region: ${croppedBase64.length} base64 chars`);
-
-      // For the Week 1 spike, just log success and close.
-      // Week 2 will pass this to OCR → LLM → action menu.
-      await invoke("close_overlay");
+      // Overlay is closed by Rust after pipeline completes
     } catch (err) {
-      console.error("Crop failed:", err);
-      await invoke("close_overlay");
+      console.error("Pipeline failed:", err);
+      try { await invoke("close_overlay"); } catch { /* window may be gone */ }
     }
   });
 
@@ -145,39 +167,49 @@ export function setupOverlay(): void {
     }
   });
 
-  // Listen for the screenshot file path from Rust.
-  // The screenshot is saved as a temp BMP file and loaded via Tauri's
-  // asset protocol — zero encoding cost on the Rust side.
-  listen<{ imagePath: string; clickEpochMs: number }>("screenshot-ready", (event) => {
-    const eventReceivedMs = Date.now();
-    const clickEpochMs = event.payload.clickEpochMs;
-    const rustToFrontendMs = eventReceivedMs - clickEpochMs;
-    console.log(
-      `[LATENCY] event_received: click-to-frontend=${rustToFrontendMs.toFixed(1)}ms`
-    );
+  // Fetch screenshot info from Rust via command (not event).
+  // Commands only execute after JS is fully loaded — no race condition.
+  loadScreenshot();
 
-    // Convert file path to asset URL that the webview can load
-    const assetUrl = convertFileSrc(event.payload.imagePath);
-    console.log(`[LATENCY] loading screenshot from: ${assetUrl}`);
+  async function loadScreenshot(): Promise<void> {
+    try {
+      const fetchStartMs = Date.now();
+      const info = await invoke<CaptureInfo>("get_capture_info");
+      const clickEpochMs = info.click_epoch_ms;
+      const commandMs = Date.now() - fetchStartMs;
+      console.log(`[LATENCY] get_capture_info: ${commandMs}ms`);
 
-    const img = new Image();
-    img.onload = () => {
-      screenshotImage = img;
-      resizeCanvas();
-      const overlayVisibleMs = Date.now();
-      const clickToVisibleMs = overlayVisibleMs - clickEpochMs;
-      const imageDecodeMs = overlayVisibleMs - eventReceivedMs;
-      console.log(
-        `[LATENCY] overlay_visible: click-to-visible=${clickToVisibleMs.toFixed(1)}ms ` +
-        `(rust-to-frontend=${rustToFrontendMs.toFixed(1)} + img-decode=${imageDecodeMs.toFixed(1)})`
-      );
-      console.log(`Screenshot loaded: ${img.width}×${img.height}`);
-    };
-    img.onerror = () => {
-      console.error(`Failed to load screenshot from: ${assetUrl}`);
-    };
-    img.src = assetUrl;
-  });
+      // Convert file path to asset URL that the webview can load
+      const assetUrl = convertFileSrc(info.image_path);
+      console.log(`[LATENCY] loading screenshot from: ${assetUrl}`);
+
+      const img = new Image();
+      img.onload = () => {
+        screenshotImage = img;
+        resizeCanvas();
+        const overlayVisibleMs = Date.now();
+        const clickToVisibleMs = overlayVisibleMs - clickEpochMs;
+        console.log(
+          `[LATENCY] overlay_visible: click-to-visible=${clickToVisibleMs.toFixed(1)}ms`
+        );
+        console.log(`Screenshot loaded: ${img.width}×${img.height}, dpr=${dpr}`);
+      };
+      img.onerror = (e) => {
+        console.error(`Failed to load screenshot from: ${assetUrl}`, e);
+        const errDiv = document.createElement("div");
+        errDiv.style.cssText = "position:fixed;top:20px;left:20px;color:red;font:16px monospace;z-index:9999;background:rgba(0,0,0,0.8);padding:12px;border-radius:4px;max-width:80vw;word-break:break-all";
+        errDiv.textContent = `IMG LOAD FAILED: ${assetUrl}`;
+        document.body.appendChild(errDiv);
+      };
+      img.src = assetUrl;
+    } catch (err) {
+      console.error("Failed to get capture info:", err);
+      const errDiv = document.createElement("div");
+      errDiv.style.cssText = "position:fixed;top:20px;left:20px;color:red;font:16px monospace;z-index:9999;background:rgba(0,0,0,0.8);padding:12px;border-radius:4px";
+      errDiv.textContent = `get_capture_info FAILED: ${err}`;
+      document.body.appendChild(errDiv);
+    }
+  }
 
   window.addEventListener("resize", resizeCanvas);
   resizeCanvas();

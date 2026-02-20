@@ -122,10 +122,10 @@ pub fn build_execute_message(
     platform: &str,
 ) -> String {
     let template = match action_id {
-        "explain_error" => PROMPT_EXPLAIN_ERROR,
-        "explain" | "explain_this" => PROMPT_EXPLAIN,
-        "suggest_fix" | "fix_error" => PROMPT_SUGGEST_FIX,
-        "export_csv" | "export_to_csv" => PROMPT_EXPORT_CSV,
+        "explain_error" | "explain_script" | "explain_code" => PROMPT_EXPLAIN_ERROR,
+        "explain" | "explain_this" | "review_ocr" => PROMPT_EXPLAIN,
+        "suggest_fix" | "fix_error" | "fix_syntax" | "fix_code" => PROMPT_SUGGEST_FIX,
+        "export_csv" | "export_to_csv" | "extract_data" => PROMPT_EXPORT_CSV,
         _ => PROMPT_EXPLAIN, // default fallback
     };
 

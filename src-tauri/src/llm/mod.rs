@@ -15,9 +15,9 @@ mod classify;
 pub mod execute;
 mod gemini;
 pub mod provider;
-mod prompts;
+pub mod prompts;
 mod prompts_execute;
-mod streaming;
+pub mod streaming;
 pub mod types;
 
 pub use classify::{classify, classify_streaming};

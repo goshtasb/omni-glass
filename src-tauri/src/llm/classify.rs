@@ -24,8 +24,19 @@ pub async fn classify_streaming(
     confidence: f64,
 ) -> ActionMenu {
     let api_key = match std::env::var("ANTHROPIC_API_KEY") {
-        Ok(key) if !key.is_empty() => key,
-        _ => {
+        Ok(key) if !key.is_empty() => {
+            eprintln!("[CLASSIFY] API key found ({} chars)", key.len());
+            key
+        }
+        Ok(_) => {
+            eprintln!("[CLASSIFY] ANTHROPIC_API_KEY is set but EMPTY");
+            log::warn!("[LLM] No ANTHROPIC_API_KEY set — returning fallback actions");
+            let menu = ActionMenu::fallback();
+            let _ = app.emit("action-menu-complete", &menu);
+            return menu;
+        }
+        Err(e) => {
+            eprintln!("[CLASSIFY] ANTHROPIC_API_KEY not in env: {}", e);
             log::warn!("[LLM] No ANTHROPIC_API_KEY set — returning fallback actions");
             let menu = ActionMenu::fallback();
             let _ = app.emit("action-menu-complete", &menu);
@@ -34,11 +45,14 @@ pub async fn classify_streaming(
     };
 
     if text.trim().is_empty() {
+        eprintln!("[CLASSIFY] OCR text is EMPTY — fallback");
         log::warn!("[LLM] Empty OCR text — returning fallback actions");
         let menu = ActionMenu::fallback();
         let _ = app.emit("action-menu-complete", &menu);
         return menu;
     }
+
+    eprintln!("[CLASSIFY] OCR text: {} chars, starting API call...", text.len());
 
     let user_message = prompts::build_classify_message(text, confidence, has_table, has_code);
 
@@ -70,6 +84,7 @@ pub async fn classify_streaming(
     {
         Ok(resp) => resp,
         Err(e) => {
+            eprintln!("[CLASSIFY] HTTP request FAILED: {}", e);
             log::error!("[LLM] HTTP request failed: {}", e);
             let menu = ActionMenu::fallback();
             let _ = app.emit("action-menu-complete", &menu);
@@ -80,11 +95,14 @@ pub async fn classify_streaming(
     let status = response.status();
     if !status.is_success() {
         let body = response.text().await.unwrap_or_default();
+        eprintln!("[CLASSIFY] API error {}: {}", status, body);
         log::error!("[LLM] API returned {}: {}", status, body);
         let menu = ActionMenu::fallback();
         let _ = app.emit("action-menu-complete", &menu);
         return menu;
     }
+
+    eprintln!("[CLASSIFY] API returned 200, streaming...");
 
     let ttfb_ms = start.elapsed().as_millis();
     log::info!("[LLM] TTFB: {}ms", ttfb_ms);
@@ -180,12 +198,13 @@ pub async fn classify_streaming(
     }
 
     let api_ms = start.elapsed().as_millis();
-    log::info!("[LLM] Stream complete: {}ms", api_ms);
+    eprintln!("[CLASSIFY] Stream complete: {}ms, accumulated {} chars", api_ms, accumulated_text.len());
 
     // Parse the full accumulated text as ActionMenu
     let json_str = streaming::strip_code_fences(&accumulated_text);
     let menu = match serde_json::from_str::<ActionMenu>(&json_str) {
         Ok(menu) => {
+            eprintln!("[CLASSIFY] SUCCESS — {} actions, type={}", menu.actions.len(), menu.content_type);
             log::info!("[LLM] Parse result: success");
             log::info!("[LLM] Content type: {}", menu.content_type);
             log::info!("[LLM] Actions: {}", menu.actions.len());
@@ -198,6 +217,8 @@ pub async fn classify_streaming(
             menu
         }
         Err(e) => {
+            eprintln!("[CLASSIFY] JSON PARSE FAILED: {}", e);
+            eprintln!("[CLASSIFY] Raw text: {}", &accumulated_text[..accumulated_text.len().min(500)]);
             log::warn!("[LLM] Failed to parse ActionMenu: {}", e);
             log::warn!("[LLM] Raw accumulated: {}", accumulated_text);
             log::info!("[LLM] Parse result: fallback");

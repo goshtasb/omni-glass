@@ -69,6 +69,20 @@ async fn process_snip(
 ) -> Result<(), String> {
     let pipeline_start = std::time::Instant::now();
 
+    // Write diagnostics to Desktop for debugging — appends each stage.
+    let diag_path = dirs::desktop_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("omni-glass-debug.log");
+    fn diag_write(path: &std::path::Path, msg: &str) {
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+            let _ = writeln!(f, "{}", msg);
+        }
+    }
+    // Clear old log and start fresh
+    let _ = std::fs::write(&diag_path, "");
+    diag_write(&diag_path, &format!("=== SNIP: {}x{} at ({},{}) ===", width, height, x, y));
+
     // Stage 2a: Crop the stored screenshot
     let cropped = {
         let state = app.state::<CaptureState>();
@@ -79,6 +93,7 @@ async fn process_snip(
         screenshot.crop_imm(x, y, width, height)
     };
     let crop_ms = pipeline_start.elapsed().as_millis();
+    diag_write(&diag_path, &format!("crop: {}ms", crop_ms));
     log::info!(
         "[CAPTURE] Bounding box received: {{x: {}, y: {}, w: {}, h: {}}}",
         x, y, width, height
@@ -105,6 +120,13 @@ async fn process_snip(
     };
     let ocr_result = ocr::recognize_text_from_bytes(png_bytes, ocr_level);
     let ocr_ms = ocr_start.elapsed().as_millis();
+    diag_write(&diag_path, &format!("ocr: {} chars in {}ms, confidence={:.2}", ocr_result.char_count, ocr_ms, ocr_result.confidence));
+    if ocr_result.char_count == 0 {
+        diag_write(&diag_path, "WARNING: OCR returned ZERO characters!");
+    } else {
+        diag_write(&diag_path, &format!("ocr_preview: {:?}", &ocr_result.text[..ocr_result.text.len().min(200)]));
+    }
+    eprintln!("[PIPELINE] OCR: {} chars in {}ms, confidence={:.2}", ocr_result.char_count, ocr_ms, ocr_result.confidence);
     log::info!("[OCR] Recognition level: {:?}", ocr_level);
     log::info!(
         "[OCR] Extracted {} chars in {}ms",
@@ -118,7 +140,9 @@ async fn process_snip(
     log::info!("[OCR] has_code_structure: {}", has_code);
 
     // Store OCR text early — action menu needs it for Copy Text (available in skeleton)
+    // Clear previous menu so the poll doesn't render stale data from a prior snip.
     let menu_state = app.state::<llm::ActionMenuState>();
+    *menu_state.menu.lock().unwrap() = None;
     *menu_state.ocr_text.lock().unwrap() = Some(ocr_result.text.clone());
 
     // Stage 3a: Close overlay
@@ -163,6 +187,10 @@ async fn process_snip(
     //
     // Provider selection: LLM_PROVIDER env var > first configured key
     let provider = resolve_provider();
+    diag_write(&diag_path, &format!("provider: {}", provider));
+    diag_write(&diag_path, &format!("ANTHROPIC_API_KEY present: {}", std::env::var("ANTHROPIC_API_KEY").map(|k| !k.is_empty()).unwrap_or(false)));
+    diag_write(&diag_path, &format!("LLM_PROVIDER env: {:?}", std::env::var("LLM_PROVIDER").ok()));
+    eprintln!("[PIPELINE] LLM provider: {}", provider);
     let action_menu = match provider.as_str() {
         "gemini" => {
             llm::classify_streaming_gemini(
@@ -185,6 +213,16 @@ async fn process_snip(
             .await
         }
     };
+
+    // Log classify result to diagnostics
+    diag_write(&diag_path, &format!("classify_result: content_type={}, summary={}", action_menu.content_type, action_menu.summary));
+    diag_write(&diag_path, &format!("actions: {}", action_menu.actions.len()));
+    for a in &action_menu.actions {
+        diag_write(&diag_path, &format!("  #{} {} ({})", a.priority, a.label, a.id));
+    }
+    let diag_ms = pipeline_start.elapsed().as_millis();
+    diag_write(&diag_path, &format!("total_pipeline: {}ms", diag_ms));
+    eprintln!("[PIPELINE] Diagnostics written to {}", diag_path.display());
 
     // Store final ActionMenu in state (fallback for get_action_menu command)
     *menu_state.menu.lock().unwrap() = Some(action_menu);
@@ -586,18 +624,19 @@ fn has_api_key(provider_id: &str) -> bool {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // Load .env.local → .env from project root.
-    // Checks both cwd (standalone) and parent (cargo run from src-tauri/).
-    // Won't override existing env vars, so `export ANTHROPIC_API_KEY=...` still works.
+    // Uses CARGO_MANIFEST_DIR (compile-time path to src-tauri/) to reliably
+    // find the project root regardless of the binary's working directory.
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let project_root = manifest_dir.parent().unwrap_or(manifest_dir);
+
     'env_load: for env_file in [".env.local", ".env"] {
-        for base in [".", ".."] {
-            let path = std::path::Path::new(base).join(env_file);
-            if path.exists() {
-                match dotenvy::from_path(&path) {
-                    Ok(_) => eprintln!("[STARTUP] Loaded {} from {}/", env_file, base),
-                    Err(e) => eprintln!("[STARTUP] Failed to load {}: {}", env_file, e),
-                }
-                break 'env_load;
+        let path = project_root.join(env_file);
+        if path.exists() {
+            match dotenvy::from_path(&path) {
+                Ok(_) => eprintln!("[STARTUP] Loaded {}", path.display()),
+                Err(e) => eprintln!("[STARTUP] Failed to load {}: {}", path.display(), e),
             }
+            break 'env_load;
         }
     }
 

@@ -37,9 +37,16 @@ pub fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
                 ..
             } = event
             {
-                log::info!("Tray icon clicked — starting capture");
+                let click_epoch_ms = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis() as f64;
+                log::info!(
+                    "[LATENCY] tray_click_epoch_ms={:.1}",
+                    click_epoch_ms
+                );
                 let app = tray_icon.app_handle();
-                if let Err(e) = start_snip_mode(app) {
+                if let Err(e) = start_snip_mode(app, click_epoch_ms) {
                     log::error!("Failed to start snip mode: {}", e);
                 }
             }
@@ -56,31 +63,57 @@ pub fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Initiates snip mode: captures the screen, then opens the overlay window.
-fn start_snip_mode(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
+///
+/// The screenshot is saved to a temp BMP file and loaded by the webview
+/// via Tauri's asset protocol. This eliminates image encoding from the
+/// critical path — the `image` crate's PNG/JPEG encoders are too slow
+/// in debug mode (2.6-3.2s for a Retina screenshot).
+fn start_snip_mode(
+    app: &AppHandle,
+    click_epoch_ms: f64,
+) -> Result<(), Box<dyn std::error::Error>> {
     use crate::capture::{self, CaptureState};
-    use base64::{engine::general_purpose::STANDARD, Engine};
 
     let start = std::time::Instant::now();
+
+    // Guard: if the overlay window already exists, close it first.
+    // The user clicked again because they want a fresh snip.
+    if let Some(existing) = app.get_webview_window("overlay") {
+        log::info!("Closing existing overlay window before starting new snip");
+        let _ = existing.destroy();
+    }
 
     // Step 1: Capture the full screen
     let screenshot = capture::capture_primary_monitor()
         .map_err(|e| format!("Screen capture failed: {}", e))?;
 
-    let capture_ms = start.elapsed().as_millis();
-    log::info!("Screen captured in {}ms", capture_ms);
+    let capture_us = start.elapsed().as_micros();
+    log::info!(
+        "[LATENCY] xcap_capture={:.2}ms",
+        capture_us as f64 / 1000.0
+    );
 
-    // Step 2: Encode as base64 PNG for the frontend overlay
-    let mut png_bytes: Vec<u8> = Vec::new();
+    // Step 2: Write raw RGBA pixels to temp BMP file.
+    // BMP = headers + raw pixels, no compression. ~32MB for Retina but
+    // it's a local file write, not a network transfer. This replaces
+    // PNG (2.6s) and JPEG (3.2s) encoding that was killing latency.
+    // PERF: Replace BMP temp file with shared memory buffer. 32MB disk
+    // write is acceptable for spike, not for production.
+    let temp_path = std::env::temp_dir().join("omni-glass-capture.bmp");
     screenshot
-        .write_to(
-            &mut std::io::Cursor::new(&mut png_bytes),
-            image::ImageFormat::Png,
-        )
-        .map_err(|e| format!("PNG encoding failed: {}", e))?;
-    let base64_png = STANDARD.encode(&png_bytes);
+        .save(&temp_path)
+        .map_err(|e| format!("BMP save failed: {}", e))?;
 
-    let encode_ms = start.elapsed().as_millis() - capture_ms;
-    log::info!("PNG encoded in {}ms ({} bytes)", encode_ms, png_bytes.len());
+    let save_us = start.elapsed().as_micros() - capture_us;
+    let file_size = std::fs::metadata(&temp_path)
+        .map(|m| m.len())
+        .unwrap_or(0);
+    log::info!(
+        "[LATENCY] bmp_save={:.2}ms ({} bytes, {})",
+        save_us as f64 / 1000.0,
+        file_size,
+        temp_path.display()
+    );
 
     // Step 3: Store the screenshot for later cropping
     let state = app.state::<CaptureState>();
@@ -100,11 +133,29 @@ fn start_snip_mode(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     .title("Omni-Glass Overlay")
     .build()?;
 
-    // Step 5: Send the screenshot to the overlay window via event
-    overlay_window.emit("screenshot-ready", &base64_png)?;
+    let window_us = start.elapsed().as_micros() - capture_us - save_us;
+    log::info!(
+        "[LATENCY] window_create={:.2}ms",
+        window_us as f64 / 1000.0
+    );
 
-    let total_ms = start.elapsed().as_millis();
-    log::info!("Overlay opened in {}ms total", total_ms);
+    // Step 5: Send temp file path + click timestamp to the overlay.
+    // The frontend uses convertFileSrc() to load via Tauri's asset protocol.
+    let payload = serde_json::json!({
+        "imagePath": temp_path.to_string_lossy(),
+        "clickEpochMs": click_epoch_ms,
+    });
+    overlay_window.emit("screenshot-ready", &payload)?;
+
+    let total_us = start.elapsed().as_micros();
+    log::info!(
+        "[LATENCY] rust_total={:.2}ms (capture={:.2} + save={:.2} + window={:.2} + emit={:.2})",
+        total_us as f64 / 1000.0,
+        capture_us as f64 / 1000.0,
+        save_us as f64 / 1000.0,
+        window_us as f64 / 1000.0,
+        (total_us - capture_us - save_us - window_us) as f64 / 1000.0,
+    );
 
     Ok(())
 }

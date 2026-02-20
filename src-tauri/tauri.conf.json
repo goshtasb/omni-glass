@@ -3,6 +3,8 @@
   "version": "0.1.0",
   "identifier": "com.omni-glass.app",
   "build": {
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build",
     "devUrl": "http://localhost:1420",
     "frontendDist": "../dist"
   },
@@ -21,7 +23,11 @@
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self' 'unsafe-inline' ipc: http://ipc.localhost; img-src 'self' asset: http://asset.localhost; script-src 'self' 'unsafe-inline'",
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["$TEMP/**"]
+      }
     }
   },
   "bundle": {

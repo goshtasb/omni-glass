@@ -9,9 +9,8 @@
  * 5. Rust crops the screenshot and returns the result.
  */
 
-import { invoke } from "@tauri-apps/api/core";
+import { invoke, convertFileSrc } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 
 interface SelectionRect {
   startX: number;
@@ -146,16 +145,38 @@ export function setupOverlay(): void {
     }
   });
 
-  // Listen for the screenshot from Rust
-  listen<string>("screenshot-ready", (event) => {
-    console.log("Screenshot received, loading image...");
+  // Listen for the screenshot file path from Rust.
+  // The screenshot is saved as a temp BMP file and loaded via Tauri's
+  // asset protocol — zero encoding cost on the Rust side.
+  listen<{ imagePath: string; clickEpochMs: number }>("screenshot-ready", (event) => {
+    const eventReceivedMs = Date.now();
+    const clickEpochMs = event.payload.clickEpochMs;
+    const rustToFrontendMs = eventReceivedMs - clickEpochMs;
+    console.log(
+      `[LATENCY] event_received: click-to-frontend=${rustToFrontendMs.toFixed(1)}ms`
+    );
+
+    // Convert file path to asset URL that the webview can load
+    const assetUrl = convertFileSrc(event.payload.imagePath);
+    console.log(`[LATENCY] loading screenshot from: ${assetUrl}`);
+
     const img = new Image();
     img.onload = () => {
       screenshotImage = img;
       resizeCanvas();
+      const overlayVisibleMs = Date.now();
+      const clickToVisibleMs = overlayVisibleMs - clickEpochMs;
+      const imageDecodeMs = overlayVisibleMs - eventReceivedMs;
+      console.log(
+        `[LATENCY] overlay_visible: click-to-visible=${clickToVisibleMs.toFixed(1)}ms ` +
+        `(rust-to-frontend=${rustToFrontendMs.toFixed(1)} + img-decode=${imageDecodeMs.toFixed(1)})`
+      );
       console.log(`Screenshot loaded: ${img.width}×${img.height}`);
     };
-    img.src = `data:image/png;base64,${event.payload}`;
+    img.onerror = () => {
+      console.error(`Failed to load screenshot from: ${assetUrl}`);
+    };
+    img.src = assetUrl;
   });
 
   window.addEventListener("resize", resizeCanvas);

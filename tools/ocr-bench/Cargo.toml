@@ -1,10 +1,12 @@
 [package]
 name = "ocr-bench"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-description = "OCR benchmark CLI for Omni-Glass — benchmarks Apple Vision Framework via Swift helper"
+description = "OCR benchmark CLI for Omni-Glass — Apple Vision Framework via swift-bridge FFI"
 license = "MIT"
 
 [dependencies]
-# Minimal deps for the benchmark tool — no swift-bridge needed.
-# The Swift helper is compiled separately via swiftc at first run.
+swift-bridge = "0.1"
+
+[build-dependencies]
+swift-bridge-build = "0.1"

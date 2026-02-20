@@ -22,7 +22,7 @@ pub fn all_providers() -> Vec<ProviderInfo> {
     vec![
         ProviderInfo {
             id: "anthropic".to_string(),
-            name: "Claude Haiku".to_string(),
+            name: "Claude Haiku — Fast, ~$0.002/snip".to_string(),
             env_key: "ANTHROPIC_API_KEY".to_string(),
             cost_per_snip: "~$0.002".to_string(),
             speed_stars: 4,
@@ -30,7 +30,7 @@ pub fn all_providers() -> Vec<ProviderInfo> {
         },
         ProviderInfo {
             id: "gemini".to_string(),
-            name: "Gemini Flash".to_string(),
+            name: "Gemini Flash — Not yet benchmarked".to_string(),
             env_key: "GEMINI_API_KEY".to_string(),
             cost_per_snip: "Free tier / ~$0.0001".to_string(),
             speed_stars: 5,

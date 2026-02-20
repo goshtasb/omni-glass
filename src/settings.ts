@@ -93,6 +93,44 @@ async function loadSettings(): Promise<void> {
         </div>
       </section>
 
+      <!-- Recognition Mode Section -->
+      <section style="margin-bottom: 24px;">
+        <h2 style="font-size: 14px; font-weight: 500; color: rgba(255,255,255,0.5);
+                    text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 12px;">
+          Recognition
+        </h2>
+
+        <div style="
+          background: #0f1629;
+          border: 1px solid rgba(255,255,255,0.1);
+          border-radius: 8px;
+          padding: 14px;
+        ">
+          <div style="margin-bottom: 12px;">
+            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; margin-bottom: 8px;">
+              <input type="radio" name="ocr-mode" value="fast" id="ocr-fast" style="accent-color: #3b82f6;" />
+              <span style="font-size: 14px;">Fast <span style="color: rgba(255,255,255,0.5); font-size: 12px;">(default)</span></span>
+            </label>
+            <div style="margin-left: 24px; font-size: 12px; color: rgba(255,255,255,0.5); margin-bottom: 10px;">
+              ~26ms on macOS. Best for action classification.
+            </div>
+
+            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer;">
+              <input type="radio" name="ocr-mode" value="accurate" id="ocr-accurate" style="accent-color: #3b82f6;" />
+              <span style="font-size: 14px;">Accurate</span>
+            </label>
+            <div style="margin-left: 24px; font-size: 12px; color: rgba(255,255,255,0.5);">
+              ~98ms on macOS. Full text fidelity for exports.
+            </div>
+          </div>
+
+          <div style="font-size: 11px; color: rgba(255,255,255,0.4); border-top: 1px solid rgba(255,255,255,0.08); padding-top: 10px;">
+            Note: "Accurate" mode is used automatically for text-sensitive actions
+            (Translate, Export CSV) regardless of this setting.
+          </div>
+        </div>
+      </section>
+
       <!-- About Section -->
       <section style="
         border-top: 1px solid rgba(255,255,255,0.1);
@@ -102,6 +140,7 @@ async function loadSettings(): Promise<void> {
       ">
         <div style="margin-bottom: 4px;">Omni-Glass v0.1.0-alpha</div>
         <div style="margin-bottom: 4px;">The Open-Source Raycast for Screen Actions</div>
+        <div style="margin-bottom: 4px;">License: MIT</div>
         <div>
           <a href="#" id="github-link" style="color: #60a5fa; text-decoration: none;">
             github.com/goshtasb/omni-glass
@@ -111,6 +150,19 @@ async function loadSettings(): Promise<void> {
 
     </div>
   `;
+
+  // Set OCR mode radio button to current value
+  try {
+    const ocrMode = await invoke<string>("get_ocr_mode");
+    const radio = document.getElementById(
+      ocrMode === "accurate" ? "ocr-accurate" : "ocr-fast"
+    ) as HTMLInputElement;
+    if (radio) radio.checked = true;
+  } catch {
+    // Default to fast if command fails
+    const radio = document.getElementById("ocr-fast") as HTMLInputElement;
+    if (radio) radio.checked = true;
+  }
 
   // Wire up event handlers
   attachHandlers(config);
@@ -280,6 +332,18 @@ function attachHandlers(config: ProviderConfig): void {
         }
       }
       el.type = "password";
+    });
+  });
+
+  // OCR mode radio buttons
+  document.querySelectorAll('input[name="ocr-mode"]').forEach((radio) => {
+    radio.addEventListener("change", async (e) => {
+      const value = (e.target as HTMLInputElement).value;
+      try {
+        await invoke("set_ocr_mode", { mode: value });
+      } catch (err) {
+        console.error("Failed to set OCR mode:", err);
+      }
     });
   });
 

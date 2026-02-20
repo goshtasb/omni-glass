@@ -96,14 +96,15 @@ async fn process_snip(
     let encode_ms = encode_start.elapsed().as_millis();
     log::info!("[CAPTURE] PNG encode: {}ms ({} bytes)", encode_ms, png_bytes.len());
 
-    // Stage 2c: OCR via Apple Vision FFI — bytes passed directly, no temp file
+    // Stage 2c: OCR — bytes passed directly, no temp file
     let ocr_start = std::time::Instant::now();
-    let ocr_result = ocr::recognize_text_from_bytes(
-        png_bytes,
-        ocr::RecognitionLevel::Fast,
-    );
+    let ocr_level = match std::env::var("OCR_MODE").unwrap_or_default().as_str() {
+        "accurate" => ocr::RecognitionLevel::Accurate,
+        _ => ocr::RecognitionLevel::Fast,
+    };
+    let ocr_result = ocr::recognize_text_from_bytes(png_bytes, ocr_level);
     let ocr_ms = ocr_start.elapsed().as_millis();
-    log::info!("[OCR] Recognition level: fast");
+    log::info!("[OCR] Recognition level: {:?}", ocr_level);
     log::info!(
         "[OCR] Extracted {} chars in {}ms",
         ocr_result.char_count, ocr_ms
@@ -391,6 +392,26 @@ fn close_settings(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// Tauri command: get the current OCR recognition mode.
+#[tauri::command]
+fn get_ocr_mode() -> String {
+    std::env::var("OCR_MODE")
+        .unwrap_or_else(|_| "fast".to_string())
+        .to_lowercase()
+}
+
+/// Tauri command: set the OCR recognition mode.
+#[tauri::command]
+fn set_ocr_mode(mode: String) -> Result<(), String> {
+    let mode = mode.to_lowercase();
+    if mode != "fast" && mode != "accurate" {
+        return Err(format!("Invalid OCR mode: {}. Use 'fast' or 'accurate'.", mode));
+    }
+    std::env::set_var("OCR_MODE", &mode);
+    log::info!("[SETTINGS] OCR mode set to: {}", mode);
+    Ok(())
+}
+
 /// Tauri command: open the settings window.
 ///
 /// Called from the tray context menu.
@@ -497,6 +518,8 @@ pub fn run() {
             test_provider,
             close_settings,
             open_settings,
+            get_ocr_mode,
+            set_ocr_mode,
         ])
         .setup(|app| {
             log::info!("Omni-Glass starting up");

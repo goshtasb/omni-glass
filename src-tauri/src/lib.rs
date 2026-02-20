@@ -118,6 +118,7 @@ async fn process_snip(
         "accurate" => ocr::RecognitionLevel::Accurate,
         _ => ocr::RecognitionLevel::Fast,
     };
+    let png_bytes_for_reocr = png_bytes.clone();
     let ocr_result = ocr::recognize_text_from_bytes(png_bytes, ocr_level);
     let ocr_ms = ocr_start.elapsed().as_millis();
     diag_write(&diag_path, &format!("ocr: {} chars in {}ms, confidence={:.2}", ocr_result.char_count, ocr_ms, ocr_result.confidence));
@@ -144,6 +145,7 @@ async fn process_snip(
     let menu_state = app.state::<llm::ActionMenuState>();
     *menu_state.menu.lock().unwrap() = None;
     *menu_state.ocr_text.lock().unwrap() = Some(ocr_result.text.clone());
+    *menu_state.crop_png.lock().unwrap() = Some(png_bytes_for_reocr);
 
     // Stage 3a: Close overlay
     if let Some(window) = app.get_webview_window("overlay") {
@@ -169,7 +171,7 @@ async fn process_snip(
     .decorations(false)
     .always_on_top(true)
     .skip_taskbar(true)
-    .resizable(false)
+    .resizable(true)
     .build()
     .map_err(|e| format!("Failed to create action menu window: {}", e))?;
 
@@ -311,11 +313,46 @@ async fn execute_action(
     state: tauri::State<'_, llm::ActionMenuState>,
     action_id: String,
 ) -> Result<llm::ActionResult, String> {
-    let ocr_text = {
+    let fast_text = {
         let guard = state.ocr_text.lock().map_err(|e| e.to_string())?;
         guard
             .clone()
             .ok_or("No OCR text available — snip first".to_string())?
+    };
+
+    // For code-fix actions, re-OCR with .accurate for higher fidelity text.
+    // The classify step used .fast (~30ms) which is good enough for action detection,
+    // but code fixes need every bracket and quote to be correct.
+    let needs_accurate = matches!(
+        action_id.as_str(),
+        "suggest_fix" | "fix_error" | "fix_syntax" | "fix_code" | "format_code"
+    );
+    let ocr_text = if needs_accurate {
+        let crop_png = {
+            let guard = state.crop_png.lock().map_err(|e| e.to_string())?;
+            guard.clone()
+        };
+        match crop_png {
+            Some(png_bytes) => {
+                let start = std::time::Instant::now();
+                let result = ocr::recognize_text_from_bytes(
+                    png_bytes,
+                    ocr::RecognitionLevel::Accurate,
+                );
+                let ms = start.elapsed().as_millis();
+                eprintln!(
+                    "[EXECUTE] Re-OCR (.accurate): {} chars in {}ms (was {} chars with .fast)",
+                    result.char_count, ms, fast_text.len()
+                );
+                result.text
+            }
+            None => {
+                eprintln!("[EXECUTE] No crop PNG available, using .fast OCR text");
+                fast_text
+            }
+        }
+    } else {
+        fast_text
     };
 
     log::info!("[EXECUTE] Starting action: {}", action_id);

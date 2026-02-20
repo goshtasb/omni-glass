@@ -28,10 +28,12 @@ pub use types::{ActionMenu, ActionMenuSkeleton};
 use std::sync::Mutex;
 
 /// Thread-safe storage for the current ActionMenu result + OCR text.
-/// Written by process_snip, read by get_action_menu command.
+/// Written by process_snip, read by get_action_menu and execute_action.
 pub struct ActionMenuState {
     pub menu: Mutex<Option<ActionMenu>>,
     pub ocr_text: Mutex<Option<String>>,
+    /// Cropped PNG bytes — stored so execute_action can re-OCR with .accurate.
+    pub crop_png: Mutex<Option<Vec<u8>>>,
 }
 
 impl ActionMenuState {
@@ -39,6 +41,7 @@ impl ActionMenuState {
         Self {
             menu: Mutex::new(None),
             ocr_text: Mutex::new(None),
+            crop_png: Mutex::new(None),
         }
     }
 }

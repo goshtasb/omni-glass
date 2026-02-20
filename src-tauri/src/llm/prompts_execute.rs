@@ -5,7 +5,7 @@
 //! Now we send the OCR text + action-specific instructions and get
 //! a structured result back.
 
-pub const EXECUTE_MAX_TOKENS: u32 = 1024;
+pub const EXECUTE_MAX_TOKENS: u32 = 2048;
 
 /// EXECUTE system prompt — instructs the LLM to perform a specific action
 /// on the extracted text and return a structured JSON result.
@@ -24,6 +24,7 @@ You execute actions on extracted screen text. You return structured JSON results
 6. NEVER suggest destructive commands (rm -rf, format, dd, etc.).
 7. NEVER include API keys, credentials, or sensitive data in your response.
 8. If the extracted text is insufficient to perform the action, return status "error" with an explanation.
+9. Respond ONLY with the JSON object — no extra text before or after. Do NOT include a "metadata" field.
 </rules>
 
 <response_format>
@@ -36,9 +37,6 @@ You execute actions on extracted screen text. You return structured JSON results
     "filePath": "<suggested filename for file results>",
     "command": "<shell command for command results>",
     "mimeType": "<MIME type for file results>"
-  },
-  "metadata": {
-    "processingNote": "<optional note about the result>"
   }
 }
 </response_format>"#;
@@ -77,19 +75,36 @@ Return result type "text" with your explanation.
 
 pub const PROMPT_SUGGEST_FIX: &str = r#"Action: suggest_fix
 
-Analyze this error and suggest a fix command.
+Analyze this error or code and determine the fix type.
 
 Platform: {platform}
 Shell: {detected_shell}
 
-Requirements:
-- Suggest ONE command that is most likely to fix the issue
-- Prefer package manager commands (pip install, npm install, brew install, cargo add, etc.)
-- The command must be safe and non-destructive
-- Set status to "needs_confirmation" — the user must approve before execution
-- Include a brief explanation of what the command does and why
+STEP 1 — Classify the fix type:
 
-Return result type "command" with the fix command.
+A) ENVIRONMENT FIX — the problem is a missing package, wrong version, permission issue,
+   missing directory, or other issue fixable with a single terminal command.
+   → Return type "command" with status "needs_confirmation".
+
+B) CODE FIX — the problem is a syntax error, logic bug, type mismatch, wrong variable name,
+   bad import, or other issue that requires editing source code.
+   → Return type "text" with status "success".
+
+STEP 2 — Return the fix:
+
+For ENVIRONMENT FIX (type A):
+- Suggest ONE safe, non-destructive shell command
+- Prefer package managers (pip install, npm install, brew install, cargo add)
+- Include a brief explanation in the "text" field
+
+For CODE FIX (type B):
+- In the "text" field, provide:
+  Line 1-2: What's wrong (one sentence per bug found)
+  Blank line
+  The CORRECTED code in a ``` code block with the language name
+- Fix ALL bugs you can identify, not just the first one
+- Preserve the original intent and structure
+- If the error includes a file path and line number, mention them
 
 <extracted_text>
 {extracted_text}
@@ -124,7 +139,7 @@ pub fn build_execute_message(
     let template = match action_id {
         "explain_error" | "explain_script" | "explain_code" => PROMPT_EXPLAIN_ERROR,
         "explain" | "explain_this" | "review_ocr" => PROMPT_EXPLAIN,
-        "suggest_fix" | "fix_error" | "fix_syntax" | "fix_code" => PROMPT_SUGGEST_FIX,
+        "suggest_fix" | "fix_error" | "fix_syntax" | "fix_code" | "format_code" => PROMPT_SUGGEST_FIX,
         "export_csv" | "export_to_csv" | "extract_data" => PROMPT_EXPORT_CSV,
         _ => PROMPT_EXPLAIN, // default fallback
     };

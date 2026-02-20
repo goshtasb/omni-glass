@@ -36,10 +36,9 @@ tools/ocr-bench/swift-src/*.a
 src-tauri/swift-src/generated/
 src-tauri/swift-src/*.a
 
-# Google Docs / Office docs (reference only, not source code)
+# Google Docs shortcuts (not actual content)
 *.gdoc
 *.gsheet
-*.docx
 
 # Benchmark outputs
 *.csv

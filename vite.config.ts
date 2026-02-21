@@ -13,6 +13,8 @@ export default defineConfig({
         "confirm-dialog": resolve(__dirname, "confirm-dialog.html"),
         settings: resolve(__dirname, "settings.html"),
         "permission-prompt": resolve(__dirname, "permission-prompt.html"),
+        "text-launcher": resolve(__dirname, "text-launcher.html"),
+        "tray-menu": resolve(__dirname, "tray-menu.html"),
       },
     },
   },

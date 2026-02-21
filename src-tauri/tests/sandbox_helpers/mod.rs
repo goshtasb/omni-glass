@@ -24,6 +24,7 @@ pub fn test_manifest(id: &str, perms: Permissions) -> PluginManifest {
         runtime: Runtime::Node,
         entry: "index.js".to_string(),
         permissions: perms,
+        configuration: None,
     }
 }
 

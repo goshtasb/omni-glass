@@ -199,6 +199,7 @@ mod tests {
             runtime: Runtime::Node,
             entry: "index.js".to_string(),
             permissions: perms,
+            configuration: None,
         }
     }
 

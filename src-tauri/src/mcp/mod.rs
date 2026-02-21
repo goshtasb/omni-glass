@@ -16,6 +16,7 @@ pub mod approval;
 pub mod approval_commands;
 pub mod builtins;
 pub mod client;
+pub mod config_store;
 pub mod loader;
 pub mod manifest;
 pub mod registry;
@@ -30,15 +31,35 @@ use crate::safety::{command_check, redact};
 /// Execute a plugin tool call, converting the MCP result to our ActionResult type.
 ///
 /// Called by the pipeline when the action belongs to a plugin (not builtin).
-/// Safety checks are applied to plugin output before returning:
-/// 1. Command blocklist — blocks dangerous commands (rm -rf, etc.)
-/// 2. PII redaction — strips sensitive data (API keys, SSNs, etc.)
+/// For non-trivial schemas, an LLM call generates structured arguments from
+/// the OCR text. Safety checks are applied to plugin output before returning.
 pub async fn execute_plugin_tool(
     registry: &ToolRegistry,
     action_id: &str,
     input_text: &str,
+    tool_description: Option<&str>,
+    input_schema: Option<&serde_json::Value>,
 ) -> ActionResult {
-    let arguments = serde_json::json!({ "text": input_text });
+    // Generate structured args for non-trivial schemas, fallback to {text} otherwise
+    let arguments = match input_schema {
+        Some(schema) if !crate::llm::plugin_args::is_trivial_schema(schema) => {
+            match crate::llm::plugin_args::generate_plugin_args(
+                action_id,
+                tool_description.unwrap_or(""),
+                schema,
+                input_text,
+            )
+            .await
+            {
+                Ok(args) => args,
+                Err(e) => {
+                    log::warn!("[MCP] Args bridge failed, falling back to {{text}}: {}", e);
+                    serde_json::json!({ "text": input_text })
+                }
+            }
+        }
+        _ => serde_json::json!({ "text": input_text }),
+    };
 
     match registry.call_plugin_tool(action_id, arguments).await {
         Ok(result) => {

@@ -129,6 +129,45 @@ Put the suggested filename in the "filePath" field.
 {extracted_text}
 </extracted_text>"#;
 
+pub const PROMPT_RUN_COMMAND: &str = r#"Action: run_command
+
+The user wants you to perform an action on their macOS computer. Generate the shell command that accomplishes their request.
+
+Platform: macOS
+Shell: zsh
+
+IMPORTANT:
+- Return type "command" with status "needs_confirmation".
+- The "command" field must contain a SINGLE shell command that accomplishes the request.
+- The "text" field must contain a brief explanation of what the command does.
+- Use macOS-native tools: osascript (AppleScript), defaults, open, pmset, networksetup, etc.
+- For brightness: use osascript with CoreGraphics/IOKit, or the `brightness` CLI if available.
+- For opening apps: use `open -a "AppName"`.
+- For system preferences: use `open "x-apple.systempreferences:..."`.
+- NEVER suggest destructive commands (rm -rf, format, dd, etc.).
+- Keep it to ONE command. If multiple steps needed, chain with && or use a subshell.
+
+<user_request>
+{extracted_text}
+</user_request>"#;
+
+pub const PROMPT_TRANSLATE: &str = r#"Action: translate_text
+
+Translate this text to {target_language}.
+
+Requirements:
+- Detect the source language automatically
+- Provide a natural, fluent translation (not word-for-word)
+- If the text is already in {target_language}, explain that and suggest improvements
+- Keep formatting (line breaks, lists) intact where possible
+
+Return result type "text". First line: "Translated from [source language]:"
+Then a blank line, then the translation.
+
+<extracted_text>
+{extracted_text}
+</extracted_text>"#;
+
 /// Build the user message for an EXECUTE call by selecting the
 /// appropriate action template and filling in placeholders.
 pub fn build_execute_message(
@@ -140,7 +179,9 @@ pub fn build_execute_message(
         "explain_error" | "explain_script" | "explain_code" => PROMPT_EXPLAIN_ERROR,
         "explain" | "explain_this" | "review_ocr" => PROMPT_EXPLAIN,
         "suggest_fix" | "fix_error" | "fix_syntax" | "fix_code" | "format_code" => PROMPT_SUGGEST_FIX,
+        "run_command" | "run_system_command" | "execute_command" => PROMPT_RUN_COMMAND,
         "export_csv" | "export_to_csv" | "extract_data" => PROMPT_EXPORT_CSV,
+        "translate_text" | "translate" => PROMPT_TRANSLATE,
         _ => PROMPT_EXPLAIN, // default fallback
     };
 
@@ -148,4 +189,5 @@ pub fn build_execute_message(
         .replace("{extracted_text}", extracted_text)
         .replace("{platform}", platform)
         .replace("{detected_shell}", "zsh")
+        .replace("{target_language}", "English")
 }

@@ -15,6 +15,7 @@ pub mod llm;
 pub mod mcp;
 mod ocr;
 mod pipeline;
+mod pipeline_text;
 pub mod safety;
 pub mod settings_commands;
 mod tray;
@@ -49,6 +50,9 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        // Global shortcut plugin — available for opt-in hotkey binding.
+        // Not registered by default; tray menu is the primary entry point.
+        // .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .manage(CaptureState::new())
         .manage(llm::ActionMenuState::new())
         .manage(ToolRegistry::new())
@@ -61,13 +65,20 @@ pub fn run() {
             commands::copy_to_clipboard,
             commands::close_overlay,
             commands::close_action_menu,
+            commands::close_permission_prompt,
             commands::get_action_menu,
             commands::run_confirmed_command,
             commands::write_to_desktop,
             commands::write_file_to_path,
-            // Pipeline commands (pipeline.rs)
+            commands::close_text_launcher,
+            commands::close_tray_menu,
+            commands::start_snip,
+            commands::open_text_launcher,
+            commands::get_plugin_names,
+            // Pipeline commands (pipeline.rs / pipeline_text.rs)
             pipeline::process_snip,
             pipeline::execute_action,
+            pipeline_text::execute_text_command,
             // Settings commands (settings_commands.rs)
             settings_commands::get_provider_config,
             settings_commands::set_active_provider,
@@ -125,4 +136,29 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("Error running Omni-Glass");
+}
+
+/// Open (or focus) the text launcher window.
+pub(crate) fn show_text_launcher(app: &tauri::AppHandle) {
+    if let Some(window) = app.get_webview_window("text-launcher") {
+        let _ = window.set_focus();
+        return;
+    }
+    match tauri::WebviewWindowBuilder::new(
+        app,
+        "text-launcher",
+        tauri::WebviewUrl::App("text-launcher.html".into()),
+    )
+    .title("Omni-Glass")
+    .inner_size(600.0, 72.0)
+    .resizable(false)
+    .decorations(false)
+    .transparent(true)
+    .always_on_top(true)
+    .center()
+    .build()
+    {
+        Ok(_) => log::info!("[TEXT_LAUNCHER] Window opened"),
+        Err(e) => log::error!("[TEXT_LAUNCHER] Failed to open: {}", e),
+    }
 }

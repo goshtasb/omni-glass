@@ -230,10 +230,22 @@ pub async fn execute_action(
     };
 
     // Check if this action belongs to a plugin (non-builtin MCP tool).
-    // If so, route to the plugin's MCP server instead of built-in execute.
+    // If so, route to the plugin's MCP server with LLM-generated args.
     if registry.is_plugin_action(&action_id).await {
         log::info!("[EXECUTE] Routing to plugin: {}", action_id);
-        let result = mcp::execute_plugin_tool(&registry, &action_id, &fast_text).await;
+        let resolved = registry.resolve_action(&action_id).await;
+        let tool_meta = match &resolved {
+            Some(qname) => registry.get_tool(qname).await,
+            None => None,
+        };
+        let result = mcp::execute_plugin_tool(
+            &registry,
+            &action_id,
+            &fast_text,
+            tool_meta.as_ref().map(|t| t.description.as_str()),
+            tool_meta.as_ref().and_then(|t| t.input_schema.as_ref()),
+        )
+        .await;
         return Ok(result);
     }
 

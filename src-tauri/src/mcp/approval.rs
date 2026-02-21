@@ -145,6 +145,7 @@ mod tests {
             runtime: crate::mcp::manifest::Runtime::Node,
             entry: "index.js".to_string(),
             permissions: perms,
+            configuration: None,
         }
     }
 

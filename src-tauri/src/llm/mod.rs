@@ -14,9 +14,11 @@
 mod classify;
 pub mod execute;
 mod gemini;
+pub mod plugin_args;
 pub mod provider;
 pub mod prompts;
 mod prompts_execute;
+pub mod prompts_text_command;
 pub mod streaming;
 pub mod types;
 

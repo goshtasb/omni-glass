@@ -1,7 +1,8 @@
 //! System tray setup and click handler.
 //!
 //! The tray icon is the primary entry point for Omni-Glass.
-//! Clicking it triggers the screen capture flow.
+//! Left/right-click opens a native menu with Snip Screen, Type Command,
+//! Settings, and Quit.
 
 use tauri::{
     image::Image as TauriImage,
@@ -10,14 +11,23 @@ use tauri::{
     AppHandle, Manager,
 };
 
-/// Sets up the system tray icon with a click handler.
+/// Sets up the system tray icon with a native menu.
 ///
-/// Left-click: triggers screen capture (snip mode).
-/// Right-click: opens context menu with Quit option.
+/// Both left-click and right-click open the same menu:
+///   - Snip Screen  → capture flow
+///   - Type Command → text launcher
+///   - Settings...  → settings window
+///   - Quit         → exit
 pub fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
+    let snip_item = MenuItemBuilder::with_id("snip", "Snip Screen").build(app)?;
+    let type_item = MenuItemBuilder::with_id("type_command", "Type Command").build(app)?;
     let settings_item = MenuItemBuilder::with_id("settings", "Settings...").build(app)?;
     let quit_item = MenuItemBuilder::with_id("quit", "Quit Omni-Glass").build(app)?;
+
     let menu = MenuBuilder::new(app)
+        .item(&snip_item)
+        .item(&type_item)
+        .separator()
         .item(&settings_item)
         .separator()
         .item(&quit_item)
@@ -33,49 +43,47 @@ pub fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
 
     let _tray = TrayIconBuilder::new()
         .icon(tray_icon)
-        .tooltip("Omni-Glass — Click to snip")
+        .tooltip("Omni-Glass")
         .menu(&menu)
-        .show_menu_on_left_click(false)
-        .on_tray_icon_event(|tray_icon, event| {
-            if let tauri::tray::TrayIconEvent::Click {
-                button: tauri::tray::MouseButton::Left,
-                ..
-            } = event
-            {
-                let click_epoch_ms = std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_millis() as f64;
-                log::info!(
-                    "[LATENCY] tray_click_epoch_ms={:.1}",
-                    click_epoch_ms
-                );
-                let app = tray_icon.app_handle();
-                if let Err(e) = start_snip_mode(app, click_epoch_ms) {
-                    log::error!("Failed to start snip mode: {}", e);
-                }
-            }
-        })
+        .show_menu_on_left_click(true)
         .on_menu_event(|app, event| {
-            if event.id() == "settings" {
-                log::info!("Settings requested from tray menu");
-                // Open settings window — reuse the Tauri command logic
-                if let Some(window) = app.get_webview_window("settings") {
-                    let _ = window.set_focus();
-                } else {
-                    let _ = tauri::WebviewWindowBuilder::new(
-                        app,
-                        "settings",
-                        tauri::WebviewUrl::App("settings.html".into()),
-                    )
-                    .title("Omni-Glass Settings")
-                    .inner_size(520.0, 500.0)
-                    .resizable(true)
-                    .build();
+            let id = event.id().as_ref();
+            match id {
+                "snip" => {
+                    log::info!("[TRAY] Snip Screen selected");
+                    let click_epoch_ms = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_millis() as f64;
+                    if let Err(e) = start_snip_mode(app, click_epoch_ms) {
+                        log::error!("Failed to start snip mode: {}", e);
+                    }
                 }
-            } else if event.id() == "quit" {
-                log::info!("Quit requested from tray menu");
-                app.exit(0);
+                "type_command" => {
+                    log::info!("[TRAY] Type Command selected");
+                    crate::show_text_launcher(app);
+                }
+                "settings" => {
+                    log::info!("[TRAY] Settings selected");
+                    if let Some(window) = app.get_webview_window("settings") {
+                        let _ = window.set_focus();
+                    } else {
+                        let _ = tauri::WebviewWindowBuilder::new(
+                            app,
+                            "settings",
+                            tauri::WebviewUrl::App("settings.html".into()),
+                        )
+                        .title("Omni-Glass Settings")
+                        .inner_size(520.0, 500.0)
+                        .resizable(true)
+                        .build();
+                    }
+                }
+                "quit" => {
+                    log::info!("[TRAY] Quit selected");
+                    app.exit(0);
+                }
+                _ => {}
             }
         })
         .build(app)?;
@@ -85,11 +93,9 @@ pub fn setup_tray(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
 
 /// Initiates snip mode: captures the screen, then opens the overlay window.
 ///
-/// The screenshot is saved to a temp BMP file and loaded by the webview
-/// via Tauri's asset protocol. This eliminates image encoding from the
-/// critical path — the `image` crate's PNG/JPEG encoders are too slow
-/// in debug mode (2.6-3.2s for a Retina screenshot).
-fn start_snip_mode(
+/// The screenshot is saved to a temp PNG file and loaded by the webview
+/// via Tauri's asset protocol.
+pub fn start_snip_mode(
     app: &AppHandle,
     click_epoch_ms: f64,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -98,7 +104,6 @@ fn start_snip_mode(
     let start = std::time::Instant::now();
 
     // Guard: if the overlay window already exists, close it first.
-    // The user clicked again because they want a fresh snip.
     if let Some(existing) = app.get_webview_window("overlay") {
         log::info!("Closing existing overlay window before starting new snip");
         let _ = existing.destroy();
@@ -115,15 +120,11 @@ fn start_snip_mode(
     );
 
     // Step 2: Save screenshot to temp PNG file for overlay display.
-    // PNG handles RGBA natively — no to_rgb8() conversion needed.
-    // to_rgb8() is ~1800ms even with opt-level=2 due to per-pixel copy.
     let temp_path = std::env::temp_dir().join("omni-glass-capture.png");
     screenshot
         .save(&temp_path)
         .map_err(|e| format!("PNG save failed: {}", e))?;
     // Canonicalize to resolve /var → /private/var symlink on macOS.
-    // Tauri's $TEMP scope resolves to the canonical path, so the
-    // asset protocol URL must also use the canonical path.
     let temp_path = std::fs::canonicalize(&temp_path)
         .unwrap_or(temp_path);
 
@@ -139,8 +140,6 @@ fn start_snip_mode(
     );
 
     // Step 3: Store the screenshot + capture info for the overlay to fetch.
-    // The overlay fetches this via get_capture_info command on load —
-    // no race condition since commands only execute after JS is ready.
     let state = app.state::<CaptureState>();
     *state.screenshot.lock().unwrap() = Some(screenshot);
     *state.capture_info.lock().unwrap() = Some(capture::CaptureInfo {
@@ -149,8 +148,7 @@ fn start_snip_mode(
     });
 
     // Step 4: Create the overlay window.
-    // The overlay will call get_capture_info on load to get the screenshot path.
-    let overlay_window = tauri::WebviewWindowBuilder::new(
+    let _overlay_window = tauri::WebviewWindowBuilder::new(
         app,
         "overlay",
         tauri::WebviewUrl::App("index.html".into()),
@@ -162,10 +160,6 @@ fn start_snip_mode(
     .skip_taskbar(true)
     .title("Omni-Glass Overlay")
     .build()?;
-
-    // Open devtools so we can see frontend console errors
-    #[cfg(debug_assertions)]
-    overlay_window.open_devtools();
 
     let window_us = start.elapsed().as_micros() - capture_us - save_us;
     log::info!(

@@ -54,11 +54,26 @@ pub async fn register_builtins(registry: &ToolRegistry) {
             description: "Explain this content clearly and concisely".to_string(),
             input_schema: None,
         },
+        RegisteredTool {
+            plugin_id: "builtin".to_string(),
+            name: "translate_text".to_string(),
+            display_name: "Translate".to_string(),
+            description: "Translate the text to English (or another target language)".to_string(),
+            input_schema: None,
+        },
+        RegisteredTool {
+            plugin_id: "builtin".to_string(),
+            name: "run_command".to_string(),
+            display_name: "Run Command".to_string(),
+            description: "Execute a user request as a macOS shell command (change settings, open apps, manage files, install software, adjust display, etc.)".to_string(),
+            input_schema: None,
+        },
     ];
 
+    let count = builtins.len();
     for tool in builtins {
         registry.register_builtin(tool).await;
     }
 
-    log::info!("[MCP] 6 built-in tools registered");
+    log::info!("[MCP] {} built-in tools registered", count);
 }

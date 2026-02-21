@@ -4,10 +4,27 @@
 //! describing the plugin's identity, runtime, entry point, and permissions.
 
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::Path;
 
 /// The filename expected in every plugin directory.
 pub const MANIFEST_FILENAME: &str = "omni-glass.plugin.json";
+
+/// A user-configurable field declared in a plugin's manifest.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct ConfigField {
+    /// Field type: "string", "number", or "boolean".
+    #[serde(rename = "type")]
+    pub field_type: String,
+    /// Human-readable label for the settings UI.
+    pub label: String,
+    /// Placeholder text for text inputs.
+    #[serde(default)]
+    pub placeholder: Option<String>,
+    /// Help text shown below the input.
+    #[serde(default)]
+    pub description: Option<String>,
+}
 
 /// Parsed and validated plugin manifest.
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -21,6 +38,9 @@ pub struct PluginManifest {
     pub entry: String,
     #[serde(default)]
     pub permissions: Permissions,
+    /// Optional user-configurable fields (e.g., default_repo, target_language).
+    #[serde(default)]
+    pub configuration: Option<HashMap<String, ConfigField>>,
 }
 
 /// Plugin runtime environment.
@@ -255,6 +275,25 @@ mod tests {
         );
         let err = load_manifest(&dir).unwrap_err();
         assert!(err.contains("reverse-domain"));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn manifest_with_configuration_loads() {
+        let dir = std::env::temp_dir().join("og-test-config-field");
+        let _ = fs::remove_dir_all(&dir);
+        setup_test_plugin(&dir, r#"{
+            "id": "com.example.configured", "name": "Cfg", "version": "1.0.0",
+            "runtime": "node", "entry": "index.js",
+            "configuration": {
+                "repo": {"type": "string", "label": "Repo", "placeholder": "owner/repo"}
+            }
+        }"#, "index.js");
+        let m = load_manifest(&dir).unwrap();
+        let cfg = m.configuration.unwrap();
+        let f = cfg.get("repo").unwrap();
+        assert_eq!(f.field_type, "string");
+        assert_eq!(f.placeholder.as_deref(), Some("owner/repo"));
         let _ = fs::remove_dir_all(&dir);
     }
 }

@@ -207,19 +207,42 @@ function renderPlugin(plugin: PendingPlugin): void {
 async function handleDecision(pluginId: string, approved: boolean): Promise<void> {
   const allowBtn = document.getElementById("btn-allow") as HTMLButtonElement;
   const denyBtn = document.getElementById("btn-deny") as HTMLButtonElement;
+  const buttonRow = document.getElementById("button-row");
   allowBtn.disabled = true;
   denyBtn.disabled = true;
   allowBtn.style.opacity = "0.6";
   denyBtn.style.opacity = "0.6";
 
+  // Show loading state while plugin loads (sandboxed spawn + init can take seconds)
+  if (buttonRow && approved) {
+    buttonRow.innerHTML = `<div style="
+      color:rgba(255,255,255,0.6);font-size:13px;width:100%;text-align:center;
+    ">Loading plugin...</div>`;
+  }
+
   try {
     await invoke("approve_plugin", { pluginId, approved });
   } catch (err) {
     console.error("approve_plugin failed:", err);
+    // Show error briefly before moving on
+    if (buttonRow) {
+      buttonRow.innerHTML = `<div style="
+        color:#fca5a5;font-size:12px;width:100%;text-align:center;
+      ">Failed to load plugin</div>`;
+    }
+    await new Promise(r => setTimeout(r, 1500));
   }
 
   // Check for more pending plugins
   await loadNext();
+}
+
+async function closeWindow(): Promise<void> {
+  try {
+    await invoke("close_permission_prompt");
+  } catch {
+    // Fallback — window may already be closing
+  }
 }
 
 async function loadNext(): Promise<void> {
@@ -228,18 +251,18 @@ async function loadNext(): Promise<void> {
     if (pending.length > 0) {
       renderPlugin(pending[0]);
     } else {
-      window.close();
+      await closeWindow();
     }
   } catch (err) {
     console.error("get_pending_approvals failed:", err);
-    window.close();
+    await closeWindow();
   }
 }
 
 // Escape key closes (denies remaining)
 document.addEventListener("keydown", (e: KeyboardEvent) => {
   if (e.key === "Escape") {
-    window.close();
+    closeWindow();
   }
 });
 

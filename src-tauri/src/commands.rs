@@ -7,6 +7,7 @@
 
 use crate::capture::CaptureState;
 use crate::llm;
+use crate::mcp;
 use crate::safety;
 use tauri::Manager;
 
@@ -105,6 +106,15 @@ pub fn close_action_menu(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// Tauri command: close the permission prompt window.
+#[tauri::command]
+pub fn close_permission_prompt(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("permission-prompt") {
+        window.close().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
 /// Tauri command: get the current ActionMenu data.
 ///
 /// Called by the action-menu window on load.
@@ -172,6 +182,59 @@ pub fn write_to_desktop(filename: String, content: String) -> Result<String, Str
     let full_path = path.to_string_lossy().to_string();
     log::info!("[EXECUTE] Wrote file: {}", full_path);
     Ok(full_path)
+}
+
+/// Tauri command: close the text launcher window.
+#[tauri::command]
+pub fn close_text_launcher(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("text-launcher") {
+        window.close().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Tauri command: get display names of loaded plugins.
+///
+/// Used by the text launcher to show available tools in the placeholder.
+#[tauri::command]
+pub async fn get_plugin_names(
+    registry: tauri::State<'_, mcp::ToolRegistry>,
+) -> Result<Vec<String>, String> {
+    let tools = registry.all_tools().await;
+    let names: Vec<String> = tools.iter().map(|t| t.display_name.clone()).collect();
+    Ok(names)
+}
+
+/// Tauri command: close the tray menu window.
+#[tauri::command]
+pub fn close_tray_menu(app: tauri::AppHandle) -> Result<(), String> {
+    if let Some(window) = app.get_webview_window("tray-menu") {
+        window.close().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// Tauri command: start the snip (capture) flow.
+///
+/// Called from the tray menu "Snip Screen" option. Delegates to the same
+/// start_snip_mode function that was previously triggered by tray click.
+#[tauri::command]
+pub fn start_snip(app: tauri::AppHandle) -> Result<(), String> {
+    let click_epoch_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as f64;
+    crate::tray::start_snip_mode(&app, click_epoch_ms)
+        .map_err(|e| e.to_string())
+}
+
+/// Tauri command: open the text launcher window.
+///
+/// Called from the tray menu "Type Command" option.
+#[tauri::command]
+pub fn open_text_launcher(app: tauri::AppHandle) -> Result<(), String> {
+    crate::show_text_launcher(&app);
+    Ok(())
 }
 
 /// Tauri command: write file to a user-chosen path (from save dialog).

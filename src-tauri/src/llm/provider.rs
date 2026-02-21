@@ -36,17 +36,30 @@ pub fn all_providers() -> Vec<ProviderInfo> {
             speed_stars: 5,
             quality_stars: 4,
         },
+        ProviderInfo {
+            id: "local".to_string(),
+            name: "Local (Qwen 2.5) — Offline, free, slower".to_string(),
+            env_key: "".to_string(),
+            cost_per_snip: "Free".to_string(),
+            speed_stars: 2,
+            quality_stars: 3,
+        },
     ]
 }
 
 /// Check if a provider has an API key configured.
+///
+/// For the "local" provider, checks whether any model is downloaded.
 pub fn is_provider_configured(provider_id: &str) -> bool {
-    let env_key = match provider_id {
-        "anthropic" => "ANTHROPIC_API_KEY",
-        "gemini" => "GEMINI_API_KEY",
-        _ => return false,
-    };
-    std::env::var(env_key)
-        .map(|k| !k.is_empty())
-        .unwrap_or(false)
+    match provider_id {
+        "anthropic" => env_key_set("ANTHROPIC_API_KEY"),
+        "gemini" => env_key_set("GEMINI_API_KEY"),
+        #[cfg(feature = "local-llm")]
+        "local" => !super::model_manager::downloaded_model_ids().is_empty(),
+        _ => false,
+    }
+}
+
+fn env_key_set(key: &str) -> bool {
+    std::env::var(key).map(|k| !k.is_empty()).unwrap_or(false)
 }

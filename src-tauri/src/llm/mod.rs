@@ -6,6 +6,7 @@
 //! Providers:
 //!   - Anthropic Claude Haiku (classify.rs)
 //!   - Google Gemini Flash (gemini.rs)
+//!   - Local via llama.cpp (local.rs) — behind `local-llm` feature flag
 //!
 //! Shared:
 //!   - streaming.rs — SSE parsing + partial JSON extraction
@@ -14,10 +15,22 @@
 mod classify;
 pub mod execute;
 mod gemini;
+#[cfg(feature = "local-llm")]
+pub mod local;
+#[cfg(feature = "local-llm")]
+pub mod local_state;
+#[cfg(feature = "local-llm")]
+pub mod model_manager;
+#[cfg(feature = "local-llm")]
+pub mod model_registry;
 pub mod plugin_args;
 pub mod provider;
 pub mod prompts;
 mod prompts_execute;
+#[cfg(feature = "local-llm")]
+pub mod prompts_execute_local;
+#[cfg(feature = "local-llm")]
+pub mod prompts_local;
 pub mod prompts_text_command;
 pub mod streaming;
 pub mod types;

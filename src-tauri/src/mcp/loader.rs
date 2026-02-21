@@ -182,6 +182,9 @@ fn spawn_plugin(
     args: &[&str],
     env: std::collections::HashMap<String, String>,
 ) -> Result<McpServer, String> {
+    // Suppress unused warning on non-macOS platforms
+    let _ = &manifest;
+
     #[cfg(target_os = "macos")]
     {
         use crate::mcp::sandbox::macos;

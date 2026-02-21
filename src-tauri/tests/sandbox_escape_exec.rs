@@ -3,12 +3,20 @@
 //! Tests 6-10 of the sandbox escape suite. Verifies environment variable
 //! filtering, shell command restrictions, and temp directory isolation.
 //!
+//! Test 6 is cross-platform. Tests 7-10 are macOS-only (sandbox-exec).
 //! See sandbox_escape.rs for tests 1-5 (network, filesystem, reads).
 
 mod sandbox_helpers;
 
-use omni_glass_lib::mcp::manifest::{Permissions, ShellPerm};
 use omni_glass_lib::mcp::sandbox::env_filter;
+
+// Cross-platform imports
+use omni_glass_lib::mcp::manifest::Permissions;
+
+// macOS-only imports
+#[cfg(target_os = "macos")]
+use omni_glass_lib::mcp::manifest::ShellPerm;
+#[cfg(target_os = "macos")]
 use sandbox_helpers::{node_available, run_sandboxed, setup_test_dir, test_manifest};
 
 // ── Test 6: Cannot read undeclared env vars (cross-platform) ───────

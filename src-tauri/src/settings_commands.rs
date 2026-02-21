@@ -22,7 +22,7 @@ pub fn resolve_provider() -> String {
     // Explicit override
     if let Ok(p) = std::env::var("LLM_PROVIDER") {
         let p = p.to_lowercase();
-        if p == "gemini" || p == "anthropic" {
+        if matches!(p.as_str(), "anthropic" | "gemini" | "local") {
             log::info!("[LLM] Provider override: {}", p);
             return p;
         }
@@ -42,7 +42,12 @@ pub fn resolve_provider() -> String {
 
 /// Check if a provider has an API key available (env var or keychain).
 /// If found in keychain but not in env, loads it into env for the provider to use.
+/// For "local" provider, checks if any model is downloaded (no API key needed).
 fn has_api_key(provider_id: &str) -> bool {
+    #[cfg(feature = "local-llm")]
+    if provider_id == "local" {
+        return !llm::model_manager::downloaded_model_ids().is_empty();
+    }
     let env_key = match provider_id {
         "anthropic" => "ANTHROPIC_API_KEY",
         "gemini" => "GEMINI_API_KEY",
@@ -111,6 +116,7 @@ pub fn save_api_key(provider_id: String, api_key: String) -> Result<(), String> 
     let env_key = match provider_id.as_str() {
         "anthropic" => "ANTHROPIC_API_KEY",
         "gemini" => "GEMINI_API_KEY",
+        "local" => return Ok(()), // No API key needed for local provider
         _ => return Err(format!("Unknown provider: {}", provider_id)),
     };
     std::env::set_var(env_key, &api_key);
@@ -124,6 +130,20 @@ pub fn save_api_key(provider_id: String, api_key: String) -> Result<(), String> 
 /// Sends a minimal request and checks for a valid response.
 #[tauri::command]
 pub async fn test_provider(provider_id: String) -> Result<bool, String> {
+    // Local provider — no API to test, just check if a model is downloaded
+    if provider_id == "local" {
+        #[cfg(feature = "local-llm")]
+        {
+            let ok = !llm::model_manager::downloaded_model_ids().is_empty();
+            log::info!("[SETTINGS] Test local — model downloaded: {}", ok);
+            return Ok(ok);
+        }
+        #[cfg(not(feature = "local-llm"))]
+        {
+            return Ok(false);
+        }
+    }
+
     let (url, headers, body) = match provider_id.as_str() {
         "anthropic" => {
             let key = std::env::var("ANTHROPIC_API_KEY")

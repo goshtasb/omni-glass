@@ -9,6 +9,10 @@ license = "MIT"
 name = "omni_glass_lib"
 crate-type = ["lib", "cdylib", "staticlib"]
 
+[features]
+default = []
+local-llm = ["dep:llama-cpp-2", "dep:encoding_rs"]
+
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
@@ -34,6 +38,11 @@ tokio = { version = "1", features = ["process", "io-util", "time", "sync"] }
 sha2 = "0.10"
 which = "7"
 tauri-plugin-global-shortcut = "2"
+
+# ── Optional: local LLM via llama.cpp ──
+# Enable with: cargo build --features local-llm
+llama-cpp-2 = { version = "0.1", optional = true, features = ["metal", "sampler"] }
+encoding_rs = { version = "0.8", optional = true }
 
 # ── macOS-only: Swift bridge for Apple Vision OCR ──
 [target.'cfg(target_os = "macos")'.build-dependencies]

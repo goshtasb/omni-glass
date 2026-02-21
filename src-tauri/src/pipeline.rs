@@ -172,6 +172,20 @@ pub async fn process_snip(
             )
             .await
         }
+        #[cfg(feature = "local-llm")]
+        "local" => {
+            let local_state = app.state::<llm::local_state::LocalLlmState>();
+            llm::local::classify_local(
+                &app,
+                &ocr_result.text,
+                has_table,
+                has_code,
+                ocr_result.confidence,
+                &plugin_tools,
+                &local_state,
+            )
+            .await
+        }
         _ => {
             llm::classify_streaming(
                 &app,
@@ -218,6 +232,7 @@ pub async fn process_snip(
 /// Returns an ActionResult JSON to the frontend.
 #[tauri::command]
 pub async fn execute_action(
+    app: tauri::AppHandle,
     state: tauri::State<'_, llm::ActionMenuState>,
     registry: tauri::State<'_, mcp::ToolRegistry>,
     action_id: String,
@@ -244,6 +259,7 @@ pub async fn execute_action(
             &fast_text,
             tool_meta.as_ref().map(|t| t.description.as_str()),
             tool_meta.as_ref().and_then(|t| t.input_schema.as_ref()),
+            Some(&app),
         )
         .await;
         return Ok(result);
@@ -285,7 +301,15 @@ pub async fn execute_action(
     };
 
     log::info!("[EXECUTE] Starting action: {}", action_id);
-    let result = llm::execute_action_anthropic(&action_id, &ocr_text).await;
+    let provider = resolve_provider();
+    let result = match provider.as_str() {
+        #[cfg(feature = "local-llm")]
+        "local" => {
+            let local_state = app.state::<llm::local_state::LocalLlmState>();
+            llm::local::execute_action_local(&action_id, &ocr_text, &local_state).await
+        }
+        _ => llm::execute_action_anthropic(&action_id, &ocr_text).await,
+    };
     log::info!(
         "[EXECUTE] Complete: status={}, type={}",
         result.status,

@@ -12,6 +12,7 @@
 mod capture;
 mod commands;
 pub mod llm;
+mod local_model_commands;
 pub mod mcp;
 mod ocr;
 mod pipeline;
@@ -91,9 +92,17 @@ pub fn run() {
             // MCP approval commands (approval_commands.rs)
             mcp::approval_commands::get_pending_approvals,
             mcp::approval_commands::approve_plugin,
+            // Local model management (local_model_commands.rs)
+            local_model_commands::get_local_models,
+            local_model_commands::download_local_model,
+            local_model_commands::delete_local_model,
         ])
         .setup(|app| {
             log::info!("Omni-Glass starting up");
+
+            // Register local LLM state when feature is enabled
+            #[cfg(feature = "local-llm")]
+            app.manage(llm::local_state::LocalLlmState::new());
 
             // Warm up Vision Framework to avoid cold-start penalty on first snip
             let warm_start = std::time::Instant::now();

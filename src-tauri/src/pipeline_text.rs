@@ -8,6 +8,8 @@
 use crate::llm;
 use crate::mcp;
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "local-llm")]
+use tauri::Manager;
 
 use llm::prompts_text_command::{self, TEXT_COMMAND_MAX_TOKENS, TEXT_COMMAND_SYSTEM_PROMPT};
 use llm::streaming;
@@ -45,6 +47,7 @@ struct RouteDecision {
 /// Routes through LLM to decide: direct response or tool dispatch.
 #[tauri::command]
 pub async fn execute_text_command(
+    app: tauri::AppHandle,
     text: String,
     registry: tauri::State<'_, mcp::ToolRegistry>,
 ) -> Result<TextCommandResult, String> {
@@ -61,8 +64,111 @@ pub async fn execute_text_command(
         .collect();
     let tools_prompt = tool_descriptions.join("\n");
 
-    // Build the LLM request
-    let user_message = prompts_text_command::build_text_command_message(&text, &tools_prompt);
+    // Route to the active provider for the routing decision
+    let provider = crate::settings_commands::resolve_provider();
+    let json_text = match provider.as_str() {
+        #[cfg(feature = "local-llm")]
+        "local" => {
+            let local_state = app.state::<llm::local_state::LocalLlmState>();
+            llm::local::execute_text_command_local(&text, &tools_prompt, &local_state).await?
+        }
+        _ => {
+            route_via_anthropic(&text, &tools_prompt).await?
+        }
+    };
+
+    let decision: RouteDecision = serde_json::from_str(&json_text)
+        .map_err(|e| format!("Failed to parse LLM routing decision: {}", e))?;
+
+    eprintln!(
+        "[TEXT_CMD] Router decision: type={}, tool_id={:?}, text={:?}",
+        decision.decision_type,
+        decision.tool_id,
+        decision.text.as_deref().map(|t| &t[..80.min(t.len())])
+    );
+
+    match decision.decision_type.as_str() {
+        "direct" => {
+            log::info!("[TEXT_CMD] Direct response");
+            Ok(TextCommandResult {
+                status: "success".to_string(),
+                text: decision.text.unwrap_or_default(),
+                action_id: None,
+                result_type: "text".to_string(),
+                command: None,
+                file_path: None,
+                file_content: None,
+                clipboard_content: None,
+            })
+        }
+        "tool" => {
+            let tool_id = decision.tool_id.unwrap_or_default();
+            let input = decision.input_text.unwrap_or_else(|| text.clone());
+            log::info!("[TEXT_CMD] Routing to tool: {}", tool_id);
+            route_to_tool(&app, &registry, &tool_id, &input).await
+        }
+        other => Err(format!("Unknown route type: {}", other)),
+    }
+}
+
+/// Dispatch to a tool — built-in (LLM execute) or plugin (MCP).
+async fn route_to_tool(
+    app: &tauri::AppHandle,
+    registry: &mcp::ToolRegistry,
+    tool_id: &str,
+    input_text: &str,
+) -> Result<TextCommandResult, String> {
+    // Strip plugin prefix (e.g. "builtin::run_command" or "builtin:run_command" → "run_command")
+    let bare_id = tool_id
+        .rsplit_once("::")
+        .map(|(_, name)| name)
+        .unwrap_or_else(|| tool_id.rsplit_once(':').map(|(_, name)| name).unwrap_or(tool_id));
+    eprintln!("[TEXT_CMD] Dispatching tool: raw={}, bare={}", tool_id, bare_id);
+
+    let result = if registry.is_plugin_action(tool_id).await {
+        // Plugin tool — use MCP dispatch with args bridge
+        let resolved = registry.resolve_action(tool_id).await;
+        let tool_meta = match &resolved {
+            Some(qname) => registry.get_tool(qname).await,
+            None => None,
+        };
+        mcp::execute_plugin_tool(
+            registry,
+            tool_id,
+            input_text,
+            tool_meta.as_ref().map(|t| t.description.as_str()),
+            tool_meta.as_ref().and_then(|t| t.input_schema.as_ref()),
+            Some(app),
+        )
+        .await
+    } else {
+        // Built-in tool — dispatch to active provider
+        let provider = crate::settings_commands::resolve_provider();
+        match provider.as_str() {
+            #[cfg(feature = "local-llm")]
+            "local" => {
+                let local_state = app.state::<llm::local_state::LocalLlmState>();
+                llm::local::execute_action_local(bare_id, input_text, &local_state).await
+            }
+            _ => llm::execute_action_anthropic(bare_id, input_text).await,
+        }
+    };
+
+    Ok(TextCommandResult {
+        status: result.status,
+        text: result.result.text.unwrap_or_default(),
+        action_id: Some(bare_id.to_string()),
+        result_type: result.result.result_type,
+        command: result.result.command,
+        file_path: result.result.file_path,
+        file_content: None, // File content handled via file_path
+        clipboard_content: result.result.clipboard_content,
+    })
+}
+
+/// Call Anthropic API for the text command routing decision.
+async fn route_via_anthropic(text: &str, tools_prompt: &str) -> Result<String, String> {
+    let user_message = prompts_text_command::build_text_command_message(text, tools_prompt);
 
     let api_key = std::env::var("ANTHROPIC_API_KEY")
         .map_err(|_| "No API key configured".to_string())?;
@@ -94,85 +200,7 @@ pub async fn execute_text_command(
     let body = resp.text().await.map_err(|e| e.to_string())?;
     let response_text = extract_text(&body)?;
     eprintln!("[TEXT_CMD] Raw router response: {}", &response_text[..300.min(response_text.len())]);
-    let json_text = streaming::strip_code_fences(&response_text);
-
-    let decision: RouteDecision = serde_json::from_str(&json_text)
-        .map_err(|e| format!("Failed to parse LLM routing decision: {}", e))?;
-
-    eprintln!(
-        "[TEXT_CMD] Router decision: type={}, tool_id={:?}, text={:?}",
-        decision.decision_type,
-        decision.tool_id,
-        decision.text.as_deref().map(|t| &t[..80.min(t.len())])
-    );
-
-    match decision.decision_type.as_str() {
-        "direct" => {
-            log::info!("[TEXT_CMD] Direct response");
-            Ok(TextCommandResult {
-                status: "success".to_string(),
-                text: decision.text.unwrap_or_default(),
-                action_id: None,
-                result_type: "text".to_string(),
-                command: None,
-                file_path: None,
-                file_content: None,
-                clipboard_content: None,
-            })
-        }
-        "tool" => {
-            let tool_id = decision.tool_id.unwrap_or_default();
-            let input = decision.input_text.unwrap_or_else(|| text.clone());
-            log::info!("[TEXT_CMD] Routing to tool: {}", tool_id);
-            route_to_tool(&registry, &tool_id, &input).await
-        }
-        other => Err(format!("Unknown route type: {}", other)),
-    }
-}
-
-/// Dispatch to a tool — built-in (LLM execute) or plugin (MCP).
-async fn route_to_tool(
-    registry: &mcp::ToolRegistry,
-    tool_id: &str,
-    input_text: &str,
-) -> Result<TextCommandResult, String> {
-    // Strip plugin prefix (e.g. "builtin::run_command" or "builtin:run_command" → "run_command")
-    let bare_id = tool_id
-        .rsplit_once("::")
-        .map(|(_, name)| name)
-        .unwrap_or_else(|| tool_id.rsplit_once(':').map(|(_, name)| name).unwrap_or(tool_id));
-    eprintln!("[TEXT_CMD] Dispatching tool: raw={}, bare={}", tool_id, bare_id);
-
-    let result = if registry.is_plugin_action(tool_id).await {
-        // Plugin tool — use MCP dispatch with args bridge
-        let resolved = registry.resolve_action(tool_id).await;
-        let tool_meta = match &resolved {
-            Some(qname) => registry.get_tool(qname).await,
-            None => None,
-        };
-        mcp::execute_plugin_tool(
-            registry,
-            tool_id,
-            input_text,
-            tool_meta.as_ref().map(|t| t.description.as_str()),
-            tool_meta.as_ref().and_then(|t| t.input_schema.as_ref()),
-        )
-        .await
-    } else {
-        // Built-in tool — use the execute pipeline
-        llm::execute_action_anthropic(bare_id, input_text).await
-    };
-
-    Ok(TextCommandResult {
-        status: result.status,
-        text: result.result.text.unwrap_or_default(),
-        action_id: Some(bare_id.to_string()),
-        result_type: result.result.result_type,
-        command: result.result.command,
-        file_path: result.result.file_path,
-        file_content: None, // File content handled via file_path
-        clipboard_content: result.result.clipboard_content,
-    })
+    Ok(streaming::strip_code_fences(&response_text))
 }
 
 /// Extract text content from an Anthropic Messages API response.

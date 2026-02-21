@@ -1,0 +1,27 @@
+{
+  "id": "com.omni-glass.github-issues",
+  "name": "GitHub Issues",
+  "version": "1.0.0",
+  "description": "Create GitHub issues from snipped error messages or text",
+  "runtime": "node",
+  "entry": "index.js",
+  "permissions": {
+    "clipboard": false,
+    "network": ["api.github.com"],
+    "environment": ["GITHUB_TOKEN"]
+  },
+  "configuration": {
+    "default_repo": {
+      "type": "string",
+      "label": "Default Repository",
+      "placeholder": "owner/repo",
+      "description": "Repository to create issues in when not specified"
+    },
+    "default_labels": {
+      "type": "string",
+      "label": "Default Labels",
+      "placeholder": "bug,omni-glass",
+      "description": "Comma-separated labels to apply to new issues"
+    }
+  }
+}

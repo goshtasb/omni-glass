@@ -1,0 +1,8 @@
+{
+  "name": "omni-glass-my-plugin",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Omni-Glass plugin",
+  "main": "index.js",
+  "type": "commonjs"
+}

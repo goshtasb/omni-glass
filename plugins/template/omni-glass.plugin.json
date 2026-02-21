@@ -1,0 +1,14 @@
+{
+  "id": "com.your-name.your-plugin",
+  "name": "My Plugin",
+  "version": "0.1.0",
+  "description": "Describe what your plugin does",
+  "runtime": "node",
+  "entry": "index.js",
+  "permissions": {
+    "clipboard": false,
+    "network": [],
+    "environment": [],
+    "filesystem": []
+  }
+}

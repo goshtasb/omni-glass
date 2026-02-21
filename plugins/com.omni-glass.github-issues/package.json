@@ -1,0 +1,7 @@
+{
+  "name": "omni-glass-github-issues",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "description": "Omni-Glass plugin: create GitHub issues from snipped text"
+}

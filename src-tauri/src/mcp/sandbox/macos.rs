@@ -47,6 +47,13 @@ pub fn generate_profile(
     profile.push_str(";; WALL OFF user data (LLM stdout = exfiltration vector)\n");
     profile.push_str("(deny file-read* (subpath \"/Users\"))\n\n");
 
+    // ── Layer 3b: allow lstat on path traversal ──
+    // Node.js realpathSync() calls lstat() on each path component when
+    // resolving the entry file. Without this, lstat('/Users/x/Library') → EPERM.
+    // file-read-metadata only allows stat/lstat — not reading file contents.
+    profile.push_str(";; Allow stat/lstat under /Users (Node.js realpathSync path resolution)\n");
+    profile.push_str("(allow file-read-metadata (subpath \"/Users\"))\n\n");
+
     // ── Layer 4: re-allow specific paths within /Users ──
     profile.push_str(";; Re-allow: runtime prefix\n");
     let prefix_str = runtime_paths.prefix.to_string_lossy();
@@ -60,6 +67,17 @@ pub fn generate_profile(
     profile.push_str(&format!(
         "(allow file-read* (subpath \"{}\"))\n\n", plugin_dir_str
     ));
+
+    // ── Layer 4b: plugin config directory ──
+    // Plugins read their config from plugin-config/{id}.json via config_store.
+    if let Some(config_dir) = dirs::config_dir() {
+        let config_path = config_dir.join("omni-glass").join("plugin-config");
+        profile.push_str(";; Re-allow: plugin config directory\n");
+        profile.push_str(&format!(
+            "(allow file-read* (subpath \"{}\"))\n\n",
+            config_path.to_string_lossy()
+        ));
+    }
 
     // ── Runtime binary exec ──
     let bin_str = runtime_paths.binary.to_string_lossy();

@@ -1,0 +1,95 @@
+//! MCP (Model Context Protocol) plugin system.
+//!
+//! This module implements an MCP client that communicates with plugin
+//! processes over JSON-RPC 2.0 / NDJSON stdio. It provides:
+//!
+//! - **types**: MCP protocol types (JSON-RPC framing, tool definitions)
+//! - **client**: McpServer — spawn child process, handshake, call tools
+//! - **manifest**: Parse and validate `omni-glass.plugin.json` files
+//! - **registry**: ToolRegistry — central store for built-in + plugin tools
+//! - **loader**: Scan plugins directory, spawn servers, discover tools
+//! - **builtins**: Register the 6 built-in actions as internal tools
+//! - **sandbox**: OS-level process sandboxing (env filtering, macOS sandbox-exec)
+//! - **approval**: Plugin approval state management (user consent)
+
+pub mod approval;
+pub mod approval_commands;
+pub mod builtins;
+pub mod client;
+pub mod loader;
+pub mod manifest;
+pub mod registry;
+pub mod sandbox;
+pub mod types;
+
+pub use registry::ToolRegistry;
+
+use crate::llm::execute::{ActionResult, ActionResultBody};
+use crate::safety::{command_check, redact};
+
+/// Execute a plugin tool call, converting the MCP result to our ActionResult type.
+///
+/// Called by the pipeline when the action belongs to a plugin (not builtin).
+/// Safety checks are applied to plugin output before returning:
+/// 1. Command blocklist — blocks dangerous commands (rm -rf, etc.)
+/// 2. PII redaction — strips sensitive data (API keys, SSNs, etc.)
+pub async fn execute_plugin_tool(
+    registry: &ToolRegistry,
+    action_id: &str,
+    input_text: &str,
+) -> ActionResult {
+    let arguments = serde_json::json!({ "text": input_text });
+
+    match registry.call_plugin_tool(action_id, arguments).await {
+        Ok(result) => {
+            let raw_text = result.text();
+            if result.is_error {
+                return ActionResult::error(action_id, &format!("Plugin error: {}", raw_text));
+            }
+
+            // Safety gate 1: block dangerous commands in plugin output
+            let cmd_check = command_check::is_command_safe(&raw_text);
+            if !cmd_check.safe {
+                let reason = cmd_check.reason.unwrap_or_else(|| "blocked pattern".into());
+                log::warn!(
+                    "[SAFETY] Plugin '{}' output blocked: {}",
+                    action_id,
+                    reason
+                );
+                return ActionResult::error(
+                    action_id,
+                    &format!("Plugin output blocked by safety filter: {}", reason),
+                );
+            }
+
+            // Safety gate 2: redact PII / secrets from plugin output
+            let redaction = redact::redact_sensitive_data(&raw_text);
+            if !redaction.redactions.is_empty() {
+                let labels: Vec<&str> = redaction.redactions.iter()
+                    .map(|r| r.label.as_str())
+                    .collect();
+                log::info!(
+                    "[SAFETY] Redacted {} pattern(s) from plugin '{}' output: {:?}",
+                    redaction.redactions.len(),
+                    action_id,
+                    labels
+                );
+            }
+
+            ActionResult {
+                status: "success".to_string(),
+                action_id: action_id.to_string(),
+                result: ActionResultBody {
+                    result_type: "text".to_string(),
+                    text: Some(redaction.cleaned_text),
+                    file_path: None,
+                    command: None,
+                    clipboard_content: None,
+                    mime_type: None,
+                },
+                metadata: None,
+            }
+        }
+        Err(e) => ActionResult::error(action_id, &format!("Failed to call plugin tool: {}", e)),
+    }
+}

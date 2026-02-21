@@ -34,7 +34,7 @@ async fn test_streaming_classify_accumulates_text() {
     import pandas
 ModuleNotFoundError: No module named 'pandas'"#;
 
-    let user_message = prompts::build_classify_message(ocr_text, 0.95, false, false);
+    let user_message = prompts::build_classify_message(ocr_text, 0.95, false, false, "");
 
     eprintln!("[TEST] Sending streaming request to {} ...", MODEL);
     let start = std::time::Instant::now();

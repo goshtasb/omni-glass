@@ -12,6 +12,7 @@ export default defineConfig({
         "action-menu": resolve(__dirname, "action-menu.html"),
         "confirm-dialog": resolve(__dirname, "confirm-dialog.html"),
         settings: resolve(__dirname, "settings.html"),
+        "permission-prompt": resolve(__dirname, "permission-prompt.html"),
       },
     },
   },

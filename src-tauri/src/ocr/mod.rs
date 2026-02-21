@@ -37,8 +37,10 @@ impl Default for RecognitionLevel {
 pub struct OcrOutput {
     pub text: String,
     pub char_count: i64,
+    #[allow(dead_code)] // set by FFI, reserved for future diagnostics
     pub latency_ms: f64,
     pub confidence: f64,
+    #[allow(dead_code)] // set by FFI, reserved for future diagnostics
     pub recognition_level: String,
 }
 
@@ -62,6 +64,7 @@ pub fn recognize_text_from_bytes(png_bytes: Vec<u8>, level: RecognitionLevel) ->
 /// Only available on macOS (Apple Vision supports path-based input).
 /// On Windows, load the file bytes and use recognize_text_from_bytes instead.
 #[cfg(target_os = "macos")]
+#[allow(dead_code)] // path-based API reserved for future use
 pub fn recognize_text(image_path: &str, level: RecognitionLevel) -> OcrOutput {
     apple_vision::recognize_text(image_path, level)
 }

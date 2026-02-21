@@ -24,6 +24,7 @@ mod ffi {
 }
 
 /// Run OCR on an image file path via Apple Vision.
+#[allow(dead_code)] // path-based API reserved for future use
 pub fn recognize_text(image_path: &str, level: RecognitionLevel) -> OcrOutput {
     let result = ffi::run_ocr_on_path(image_path.to_string(), level as i32);
     OcrOutput {

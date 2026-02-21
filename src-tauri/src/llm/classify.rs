@@ -22,6 +22,7 @@ pub async fn classify_streaming(
     has_table: bool,
     has_code: bool,
     confidence: f64,
+    plugin_tools: &str,
 ) -> ActionMenu {
     let api_key = match std::env::var("ANTHROPIC_API_KEY") {
         Ok(key) if !key.is_empty() => {
@@ -54,7 +55,7 @@ pub async fn classify_streaming(
 
     eprintln!("[CLASSIFY] OCR text: {} chars, starting API call...", text.len());
 
-    let user_message = prompts::build_classify_message(text, confidence, has_table, has_code);
+    let user_message = prompts::build_classify_message(text, confidence, has_table, has_code, plugin_tools);
 
     log::info!("[LLM] Provider: anthropic (streaming)");
     log::info!("[LLM] Model: {}", MODEL);
@@ -205,23 +206,12 @@ pub async fn classify_streaming(
     let menu = match serde_json::from_str::<ActionMenu>(&json_str) {
         Ok(menu) => {
             eprintln!("[CLASSIFY] SUCCESS — {} actions, type={}", menu.actions.len(), menu.content_type);
-            log::info!("[LLM] Parse result: success");
-            log::info!("[LLM] Content type: {}", menu.content_type);
-            log::info!("[LLM] Actions: {}", menu.actions.len());
-            for action in &menu.actions {
-                log::info!(
-                    "[LLM]   #{} {} ({}): {}",
-                    action.priority, action.label, action.id, action.description
-                );
-            }
+            log::info!("[LLM] Parsed {} actions, type={}", menu.actions.len(), menu.content_type);
             menu
         }
         Err(e) => {
             eprintln!("[CLASSIFY] JSON PARSE FAILED: {}", e);
-            eprintln!("[CLASSIFY] Raw text: {}", &accumulated_text[..accumulated_text.len().min(500)]);
-            log::warn!("[LLM] Failed to parse ActionMenu: {}", e);
-            log::warn!("[LLM] Raw accumulated: {}", accumulated_text);
-            log::info!("[LLM] Parse result: fallback");
+            log::warn!("[LLM] Failed to parse ActionMenu: {} — raw: {}", e, &accumulated_text[..accumulated_text.len().min(200)]);
             ActionMenu::fallback()
         }
     };
@@ -236,35 +226,28 @@ fn extract_text_delta(data: &str) -> Option<String> {
     json["delta"]["text"].as_str().map(|s| s.to_string())
 }
 
-/// Non-streaming classify (kept as fallback, not used in main pipeline).
+/// Non-streaming classify (used by integration tests, not the main pipeline).
 pub async fn classify(
     text: &str,
     has_table: bool,
     has_code: bool,
     confidence: f64,
+    plugin_tools: &str,
 ) -> ActionMenu {
     let api_key = match std::env::var("ANTHROPIC_API_KEY") {
         Ok(key) if !key.is_empty() => key,
-        _ => {
-            log::warn!("[LLM] No ANTHROPIC_API_KEY set — returning fallback actions");
-            return ActionMenu::fallback();
-        }
+        _ => return ActionMenu::fallback(),
     };
-
     if text.trim().is_empty() {
-        log::warn!("[LLM] Empty OCR text — returning fallback actions");
         return ActionMenu::fallback();
     }
 
-    let user_message = prompts::build_classify_message(text, confidence, has_table, has_code);
-
-    log::info!("[LLM] Provider: anthropic");
-    log::info!("[LLM] Model: {}", MODEL);
-
+    let user_message = prompts::build_classify_message(
+        text, confidence, has_table, has_code, plugin_tools,
+    );
     let start = std::time::Instant::now();
 
-    let client = reqwest::Client::new();
-    let response = match client
+    let response = reqwest::Client::new()
         .post("https://api.anthropic.com/v1/messages")
         .header("x-api-key", &api_key)
         .header("anthropic-version", "2023-06-01")
@@ -273,70 +256,38 @@ pub async fn classify(
             "model": MODEL,
             "max_tokens": MAX_TOKENS,
             "system": CLASSIFY_SYSTEM_PROMPT,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": user_message,
-                }
-            ]
+            "messages": [{"role": "user", "content": user_message}]
         }))
         .send()
-        .await
-    {
-        Ok(resp) => resp,
+        .await;
+
+    let response = match response {
+        Ok(r) if r.status().is_success() => r,
+        Ok(r) => {
+            log::error!("[LLM] API returned {}", r.status());
+            return ActionMenu::fallback();
+        }
         Err(e) => {
             log::error!("[LLM] HTTP request failed: {}", e);
             return ActionMenu::fallback();
         }
     };
 
-    let api_ms = start.elapsed().as_millis();
-    let status = response.status();
-
-    if !status.is_success() {
-        let body = response.text().await.unwrap_or_default();
-        log::error!("[LLM] API returned {}: {}", status, body);
-        return ActionMenu::fallback();
-    }
-
     let body: serde_json::Value = match response.json().await {
         Ok(v) => v,
-        Err(e) => {
-            log::error!("[LLM] Failed to parse response body: {}", e);
-            return ActionMenu::fallback();
-        }
+        Err(_) => return ActionMenu::fallback(),
     };
 
-    if let Some(usage) = body.get("usage") {
-        let input_tokens = usage["input_tokens"].as_u64().unwrap_or(0);
-        let output_tokens = usage["output_tokens"].as_u64().unwrap_or(0);
-        log::info!("[LLM] Input tokens: {}", input_tokens);
-        log::info!("[LLM] Output tokens: {}", output_tokens);
-    }
-
-    log::info!("[LLM] API latency: {}ms", api_ms);
+    log::info!("[LLM] API latency: {}ms", start.elapsed().as_millis());
 
     let text_content = match body["content"][0]["text"].as_str() {
         Some(t) => t,
-        None => {
-            log::error!("[LLM] No text content in response");
-            return ActionMenu::fallback();
-        }
+        None => return ActionMenu::fallback(),
     };
 
     let json_str = streaming::strip_code_fences(text_content);
-
-    match serde_json::from_str::<ActionMenu>(&json_str) {
-        Ok(menu) => {
-            log::info!("[LLM] Parse result: success");
-            log::info!("[LLM] Content type: {}", menu.content_type);
-            log::info!("[LLM] Actions: {}", menu.actions.len());
-            menu
-        }
-        Err(e) => {
-            log::warn!("[LLM] Failed to parse ActionMenu: {}", e);
-            log::warn!("[LLM] Raw response: {}", text_content);
-            ActionMenu::fallback()
-        }
-    }
+    serde_json::from_str::<ActionMenu>(&json_str).unwrap_or_else(|e| {
+        log::warn!("[LLM] Failed to parse ActionMenu: {}", e);
+        ActionMenu::fallback()
+    })
 }

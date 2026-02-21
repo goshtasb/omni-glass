@@ -37,6 +37,7 @@ pub async fn classify_streaming_gemini(
     has_table: bool,
     has_code: bool,
     confidence: f64,
+    plugin_tools: &str,
 ) -> ActionMenu {
     let api_key = match std::env::var("GEMINI_API_KEY") {
         Ok(key) if !key.is_empty() => key,
@@ -55,7 +56,7 @@ pub async fn classify_streaming_gemini(
         return menu;
     }
 
-    let user_message = super::prompts::build_classify_message(text, confidence, has_table, has_code);
+    let user_message = super::prompts::build_classify_message(text, confidence, has_table, has_code, plugin_tools);
 
     log::info!("[LLM] Provider: gemini (streaming)");
     log::info!("[LLM] Model: {}", GEMINI_MODEL);

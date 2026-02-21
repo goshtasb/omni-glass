@@ -6,6 +6,7 @@
 
 use crate::capture::CaptureState;
 use crate::llm;
+use crate::mcp;
 use crate::ocr;
 use crate::settings_commands::resolve_provider;
 use tauri::Manager;
@@ -142,10 +143,22 @@ pub async fn process_snip(
     );
 
     // Stage 4: Stream LLM classify — emits events to the action menu window.
+    // Get plugin tool descriptions so the LLM knows about installed plugins.
+    let registry = app.state::<mcp::ToolRegistry>();
+    let all_tools = registry.all_tools().await;
+    let plugin_count = all_tools.iter().filter(|t| t.plugin_id != "builtin").count();
+    let plugin_tools = registry.tools_for_prompt().await;
+    diag_write(&diag_path, &format!("registry: {} total tools, {} plugin tools", all_tools.len(), plugin_count));
+
     let provider = resolve_provider();
     diag_write(&diag_path, &format!("provider: {}", provider));
     diag_write(&diag_path, &format!("ANTHROPIC_API_KEY present: {}", std::env::var("ANTHROPIC_API_KEY").map(|k| !k.is_empty()).unwrap_or(false)));
     diag_write(&diag_path, &format!("LLM_PROVIDER env: {:?}", std::env::var("LLM_PROVIDER").ok()));
+    if !plugin_tools.is_empty() {
+        diag_write(&diag_path, &format!("plugin_tools_for_prompt:\n{}", plugin_tools.trim()));
+    } else {
+        diag_write(&diag_path, "plugin_tools_for_prompt: EMPTY (no plugins or not loaded yet)");
+    }
     eprintln!("[PIPELINE] LLM provider: {}", provider);
     let action_menu = match provider.as_str() {
         "gemini" => {
@@ -155,6 +168,7 @@ pub async fn process_snip(
                 has_table,
                 has_code,
                 ocr_result.confidence,
+                &plugin_tools,
             )
             .await
         }
@@ -165,6 +179,7 @@ pub async fn process_snip(
                 has_table,
                 has_code,
                 ocr_result.confidence,
+                &plugin_tools,
             )
             .await
         }
@@ -204,6 +219,7 @@ pub async fn process_snip(
 #[tauri::command]
 pub async fn execute_action(
     state: tauri::State<'_, llm::ActionMenuState>,
+    registry: tauri::State<'_, mcp::ToolRegistry>,
     action_id: String,
 ) -> Result<llm::ActionResult, String> {
     let fast_text = {
@@ -212,6 +228,14 @@ pub async fn execute_action(
             .clone()
             .ok_or("No OCR text available — snip first".to_string())?
     };
+
+    // Check if this action belongs to a plugin (non-builtin MCP tool).
+    // If so, route to the plugin's MCP server instead of built-in execute.
+    if registry.is_plugin_action(&action_id).await {
+        log::info!("[EXECUTE] Routing to plugin: {}", action_id);
+        let result = mcp::execute_plugin_tool(&registry, &action_id, &fast_text).await;
+        return Ok(result);
+    }
 
     // For code-fix actions, re-OCR with .accurate for higher fidelity text.
     // The classify step used .fast (~30ms) which is good enough for action detection,

@@ -1,4 +1,4 @@
-# Omni-Glass
+# OmniGlass
 
 ## Why I Built This
 

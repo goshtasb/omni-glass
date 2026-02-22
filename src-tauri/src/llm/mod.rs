@@ -26,7 +26,7 @@ pub mod model_registry;
 pub mod plugin_args;
 pub mod provider;
 pub mod prompts;
-mod prompts_execute;
+pub mod prompts_execute;
 #[cfg(feature = "local-llm")]
 pub mod prompts_execute_local;
 #[cfg(feature = "local-llm")]

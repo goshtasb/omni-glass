@@ -6,6 +6,8 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { PhysicalPosition } from "@tauri-apps/api/dpi";
 
 // ── Shared types ─────────────────────────────────────────────────────
 
@@ -62,6 +64,69 @@ export function escapeHtml(text: string): string {
   return div.innerHTML;
 }
 
+// ── Drag handle ─────────────────────────────────────────────────────
+
+const DRAG_HANDLE = `
+  <div class="drag-handle" style="
+    height: 18px;
+    cursor: grab;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255,255,255,0.03);
+    border-bottom: 1px solid rgba(255,255,255,0.06);
+  ">
+    <div style="
+      width: 32px;
+      height: 4px;
+      border-radius: 2px;
+      background: rgba(255,255,255,0.2);
+      pointer-events: none;
+    "></div>
+  </div>
+`;
+
+let dragging = false;
+export function isDragging(): boolean { return dragging; }
+
+function attachDragListener(): void {
+  const handle = document.querySelector(".drag-handle") as HTMLElement | null;
+  if (!handle) return;
+  const win = getCurrentWindow();
+  let startX = 0;
+  let startY = 0;
+  let winX = 0;
+  let winY = 0;
+
+  handle.addEventListener("mousedown", async (e) => {
+    e.preventDefault();
+    dragging = true;
+    const scale = window.devicePixelRatio;
+    startX = e.screenX;
+    startY = e.screenY;
+    const pos = await win.outerPosition();
+    winX = pos.x;
+    winY = pos.y;
+    handle.style.cursor = "grabbing";
+
+    const onMove = (ev: MouseEvent) => {
+      const dx = (ev.screenX - startX) * scale;
+      const dy = (ev.screenY - startY) * scale;
+      win.setPosition(new PhysicalPosition(winX + dx, winY + dy));
+    };
+
+    const onUp = () => {
+      dragging = false;
+      handle.style.cursor = "grab";
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    };
+
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  });
+}
+
 // ── Skeleton (State 1) ──────────────────────────────────────────────
 
 export function renderSkeleton(): void {
@@ -76,6 +141,7 @@ export function renderSkeleton(): void {
       overflow: hidden;
       border: 1px solid rgba(255,255,255,0.1);
     ">
+      ${DRAG_HANDLE}
       <div id="menu-summary" style="
         padding: 10px 14px;
         font-size: 13px;
@@ -118,6 +184,7 @@ export function renderSkeleton(): void {
       </div>
     </div>
   `;
+  attachDragListener();
 }
 
 // ── Skeleton update ─────────────────────────────────────────────────
@@ -148,6 +215,7 @@ export function renderMenu(menu: ActionMenu): void {
       overflow: hidden;
       border: 1px solid rgba(255,255,255,0.1);
     ">
+      ${DRAG_HANDLE}
       <div style="
         padding: 10px 14px;
         font-size: 13px;
@@ -181,6 +249,8 @@ export function renderMenu(menu: ActionMenu): void {
       </div>
     </div>
   `;
+
+  attachDragListener();
 
   console.log(
     `[RENDER] Complete menu: ${menu.actions.length} actions, type=${menu.contentType}`

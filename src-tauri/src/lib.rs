@@ -69,6 +69,7 @@ pub fn run() {
             commands::close_permission_prompt,
             commands::get_action_menu,
             commands::run_confirmed_command,
+            commands::summarize_command_output,
             commands::write_to_desktop,
             commands::write_file_to_path,
             commands::close_text_launcher,

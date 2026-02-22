@@ -28,6 +28,7 @@ import {
   showLoading,
   showFeedback,
   closeAfterDelay,
+  isDragging,
 } from "./action-menu-render";
 
 import {
@@ -174,9 +175,13 @@ document.addEventListener("keydown", async (e: KeyboardEvent) => {
   }
 });
 
-window.addEventListener("blur", async () => {
-  if (!menuRendered || actionInProgress) return;
-  try { await invoke("close_action_menu"); } catch { /* closing */ }
+window.addEventListener("blur", () => {
+  // Delay blur-close to let mousedown on drag handle set isDragging first.
+  // Without this, macOS fires blur before the DOM mousedown reaches our handler.
+  setTimeout(async () => {
+    if (!menuRendered || actionInProgress || isDragging()) return;
+    try { await invoke("close_action_menu"); } catch { /* closing */ }
+  }, 150);
 });
 
 init();

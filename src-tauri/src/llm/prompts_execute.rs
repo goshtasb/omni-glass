@@ -168,6 +168,45 @@ Then a blank line, then the translation.
 {extracted_text}
 </extracted_text>"#;
 
+// ── Summarize command output prompt ──────────────────────────────
+
+pub const SUMMARIZE_OUTPUT_SYSTEM: &str = r#"You summarize shell command output into clear, human-readable answers. The user asked a question, a shell command was run to answer it, and you now see the raw output. Summarize the output to directly answer the user's original question.
+
+Rules:
+1. Give a concise, direct answer (1-3 sentences).
+2. Include specific numbers, totals, or key data points from the output.
+3. Convert raw units to human-readable form (e.g., KB → MB/GB).
+4. If the output has many lines, summarize the aggregate (totals, counts, ranges).
+5. Do NOT include raw command output. Do NOT mention the command that was run.
+6. Respond in plain text only — no JSON, no code blocks."#;
+
+pub const SUMMARIZE_MAX_TOKENS: u32 = 256;
+
+/// Build the user message for summarizing command output.
+pub fn build_summarize_message(
+    user_question: &str,
+    command: &str,
+    raw_output: &str,
+) -> String {
+    // Truncate output to avoid hitting token limits
+    let output_preview = if raw_output.len() > 3000 {
+        format!("{}...\n[truncated, {} total chars]", &raw_output[..3000], raw_output.len())
+    } else {
+        raw_output.to_string()
+    };
+
+    format!(
+        r#"User's question: {user_question}
+
+Command that was run: {command}
+
+Raw output:
+{output_preview}
+
+Summarize this output to directly answer the user's question."#
+    )
+}
+
 /// Build the user message for an EXECUTE call by selecting the
 /// appropriate action template and filling in placeholders.
 pub fn build_execute_message(
@@ -180,7 +219,7 @@ pub fn build_execute_message(
         "explain" | "explain_this" | "review_ocr" => PROMPT_EXPLAIN,
         "suggest_fix" | "fix_error" | "fix_syntax" | "fix_code" | "format_code" => PROMPT_SUGGEST_FIX,
         "run_command" | "run_system_command" | "execute_command" => PROMPT_RUN_COMMAND,
-        "export_csv" | "export_to_csv" | "extract_data" => PROMPT_EXPORT_CSV,
+        "export_csv" | "export_to_csv" | "extract_to_csv" | "extract_data" | "extract_csv" => PROMPT_EXPORT_CSV,
         "translate_text" | "translate" => PROMPT_TRANSLATE,
         _ => PROMPT_EXPLAIN, // default fallback
     };

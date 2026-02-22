@@ -16,12 +16,15 @@
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-shell";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { LogicalSize } from "@tauri-apps/api/dpi";
+import { LogicalSize, PhysicalPosition } from "@tauri-apps/api/dpi";
 
 const appWindow = getCurrentWindow();
 const WIDTH = 600;
 const INPUT_HEIGHT = 72;
 const MAX_HEIGHT = 500;
+
+// Store the original user question for command output summarization
+let lastUserQuestion = "";
 
 // ── Window sizing ────────────────────────────────────────────────────
 
@@ -52,6 +55,22 @@ function renderInput(): void {
       box-shadow: 0 4px 16px rgba(0,0,0,0.4);
       overflow: hidden;
     ">
+      <div id="drag-handle" style="
+        height: 14px;
+        cursor: grab;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        background: rgba(255,255,255,0.03);
+      ">
+        <div style="
+          width: 32px;
+          height: 4px;
+          border-radius: 2px;
+          background: rgba(255,255,255,0.2);
+          pointer-events: none;
+        "></div>
+      </div>
       <input id="text-input" type="text" placeholder="Ask anything or type a command..." style="
         width: 100%;
         padding: 12px 14px;
@@ -76,11 +95,46 @@ function renderInput(): void {
       await closeLauncher();
     }
   });
+
+  const dragHandle = document.getElementById("drag-handle");
+  if (dragHandle) {
+    let startX = 0;
+    let startY = 0;
+    let winX = 0;
+    let winY = 0;
+
+    dragHandle.addEventListener("mousedown", async (e) => {
+      e.preventDefault();
+      const scale = window.devicePixelRatio;
+      startX = e.screenX;
+      startY = e.screenY;
+      const pos = await appWindow.outerPosition();
+      winX = pos.x;
+      winY = pos.y;
+      dragHandle.style.cursor = "grabbing";
+
+      const onMove = (ev: MouseEvent) => {
+        const dx = (ev.screenX - startX) * scale;
+        const dy = (ev.screenY - startY) * scale;
+        appWindow.setPosition(new PhysicalPosition(winX + dx, winY + dy));
+      };
+
+      const onUp = () => {
+        dragHandle.style.cursor = "grab";
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+      };
+
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
+    });
+  }
 }
 
 // ── Submit ───────────────────────────────────────────────────────────
 
 async function submitCommand(text: string): Promise<void> {
+  lastUserQuestion = text;
   const input = document.getElementById("text-input") as HTMLInputElement;
   input.disabled = true;
   input.style.opacity = "0.5";
@@ -208,8 +262,24 @@ function showCommandConfirmation(result: TextCommandResult): void {
     btn.style.opacity = "0.6";
 
     try {
-      const output = await invoke<string>("run_confirmed_command", { command: cmd });
-      showTextResult(output || "Command completed successfully.", false);
+      const rawOutput = await invoke<string>("run_confirmed_command", { command: cmd });
+      if (!rawOutput) {
+        showTextResult("Command completed successfully.", false);
+      } else {
+        // Summarize multi-line output through LLM for human-readable answer
+        showStatus("Summarizing...");
+        await resizeToContent();
+        try {
+          const summary = await invoke<string>("summarize_command_output", {
+            userQuestion: lastUserQuestion,
+            command: cmd,
+            rawOutput,
+          });
+          showTextResult(summary, false);
+        } catch {
+          showTextResult(rawOutput, false); // Fallback to raw output
+        }
+      }
     } catch (err) {
       showTextResult(`Command failed: ${err}`, true);
     }

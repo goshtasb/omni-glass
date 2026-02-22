@@ -4,7 +4,10 @@
 //! profiles correctly block network access, filesystem reads/writes,
 //! and allow declared permissions.
 //!
+//! macOS-only: all tests use sandbox-exec which is macOS-specific.
 //! See sandbox_escape_exec.rs for tests 6-10 (env vars, shell, tmp).
+
+#![cfg(target_os = "macos")]
 
 mod sandbox_helpers;
 

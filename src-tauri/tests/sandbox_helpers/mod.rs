@@ -1,8 +1,7 @@
 //! Shared test helpers for sandbox escape tests.
 
 use omni_glass_lib::mcp::manifest::{Permissions, PluginManifest, Runtime};
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Command;
 
 /// Create a test plugin directory with a minimal index.js entry.
@@ -39,11 +38,11 @@ pub fn node_available() -> bool {
 /// Returns (exit_code, stdout, stderr).
 #[cfg(target_os = "macos")]
 pub fn run_sandboxed(
-    profile_path: &Path,
-    script_path: &Path,
-    env: HashMap<String, String>,
+    profile_path: &std::path::Path,
+    script_path: &std::path::Path,
+    env: std::collections::HashMap<String, String>,
 ) -> (i32, String, String) {
-    let cwd = script_path.parent().unwrap_or(Path::new("/tmp"));
+    let cwd = script_path.parent().unwrap_or(std::path::Path::new("/tmp"));
     let output = Command::new("sandbox-exec")
         .args(["-f", &profile_path.to_string_lossy()])
         .arg("node")

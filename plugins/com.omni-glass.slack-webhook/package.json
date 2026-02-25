@@ -1,0 +1,7 @@
+{
+  "name": "omni-glass-slack-webhook",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "description": "Omni-Glass plugin: send snipped content to Slack via webhook"
+}

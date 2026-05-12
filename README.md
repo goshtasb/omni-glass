@@ -59,58 +59,68 @@ OmniGlass is a platform built on the [Model Context Protocol (MCP)](https://mode
 
 Here's what makes plugin development different from anything else you've built: **you don't write prompt engineering.** OmniGlass handles the Screen → OCR → LLM pipeline. By the time your plugin code runs, you're receiving clean, structured JSON. You write the API call. That's it.
 
-A complete plugin that sends whatever you snip to a Slack channel:
+A complete plugin that sends whatever you snip to a Slack channel. No SDK dependency — vanilla Node speaking JSON-RPC 2.0 over stdio:
 
 ```javascript
-// index.js — that's the whole plugin
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+// index.js
+const readline = require("readline");
 
-const server = new Server({ name: "slack-post", version: "1.0.0" }, {
-  capabilities: { tools: {} }
-});
+const TOOLS = [{
+  name: "post_to_slack",
+  description: "Send captured screen content to a Slack channel.",
+  inputSchema: {
+    type: "object",
+    properties: { text: { type: "string", description: "The message to post" } },
+    required: ["text"]
+  }
+}];
 
-server.setRequestHandler("tools/list", async () => ({
-  tools: [{
-    name: "post_to_slack",
-    description: "Send captured screen content to a Slack channel",
-    inputSchema: {
-      type: "object",
-      properties: {
-        message: { type: "string", description: "The content to post" },
-        channel: { type: "string", description: "Slack channel name" }
-      },
-      required: ["message"]
-    }
-  }]
-}));
-
-server.setRequestHandler("tools/call", async (request) => {
-  const { message, channel } = request.params.arguments;
+async function handleToolCall(name, args) {
   await fetch(process.env.SLACK_WEBHOOK_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ channel: channel || "#general", text: message })
+    body: JSON.stringify({ text: args.text })
   });
-  return { content: [{ type: "text", text: `Posted to ${channel || "#general"}` }] };
-});
+  return { content: [{ type: "text", text: "Posted to Slack." }] };
+}
 
-const transport = new StdioServerTransport();
-await server.connect(transport);
+const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+const send = (obj) => process.stdout.write(JSON.stringify(obj) + "\n");
+
+rl.on("line", (line) => {
+  const msg = JSON.parse(line.trim());
+  if (msg.method === "initialize") {
+    send({ jsonrpc: "2.0", id: msg.id, result: {
+      protocolVersion: "2024-11-05",
+      capabilities: { tools: {} },
+      serverInfo: { name: "slack-post", version: "1.0.0" }
+    }});
+  } else if (msg.method === "tools/list") {
+    send({ jsonrpc: "2.0", id: msg.id, result: { tools: TOOLS } });
+  } else if (msg.method === "tools/call") {
+    handleToolCall(msg.params.name, msg.params.arguments)
+      .then((r) => send({ jsonrpc: "2.0", id: msg.id, result: r }));
+  }
+});
 ```
 
 ```json
-// omni-glass.plugin.json — the manifest
+// omni-glass.plugin.json
 {
+  "id": "com.you.slack-post",
   "name": "Slack Post",
-  "command": "node",
-  "args": ["index.js"],
-  "env_keys": ["SLACK_WEBHOOK_URL"],
-  "permissions": { "network": ["hooks.slack.com"] }
+  "version": "1.0.0",
+  "description": "Send snipped content to Slack",
+  "runtime": "node",
+  "entry": "index.js",
+  "permissions": {
+    "network": ["hooks.slack.com"],
+    "environment": ["SLACK_WEBHOOK_URL"]
+  }
 }
 ```
 
-Drop it in `~/.config/omni-glass/plugins/slack-post/`. Restart. Your action appears in the menu.
+Drop both files in `~/.config/omni-glass/plugins/com.you.slack-post/` with a minimal `package.json` (`{"type": "commonjs"}`). Restart OmniGlass. Your action appears in the menu.
 
 **What the community could build** (each under 100 lines):
 

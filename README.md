@@ -15,7 +15,6 @@
   <a href="#the-execution-gap">Demo</a> •
   <a href="#build-a-plugin-in-5-minutes">Build a Plugin</a> •
   <a href="#quick-start">Install</a> •
-  <a href="https://discord.gg/omniglass">Discord</a> •
   <a href="docs/plugin-guide.md">Plugin Guide</a>
 </p>
 
@@ -24,10 +23,6 @@
   <img src="https://img.shields.io/github/license/goshtasb/OmniGlass" alt="License" />
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-blue" alt="Platform" />
   <img src="https://img.shields.io/badge/LLM-Cloud%20%7C%20Local-green" alt="LLM" />
-</p>
-
-<p align="center">
-  <img src="docs/assets/demo.gif" alt="OmniGlass in action — snip a Python error, click Fix, it runs" width="720" />
 </p>
 
 ---
@@ -165,9 +160,9 @@ npm run tauri dev
 
 Pre-built `.dmg` installer coming soon.
 
-**Windows** — compiles and passes CI. Needs real-hardware testing. If you have a Windows machine, see [Issue #1](https://github.com/goshtasb/OmniGlass/issues/1).
+**Windows** — compiles and passes CI. Needs real-hardware testing. If you have a Windows machine and want to help, open a discussion.
 
-**Linux** — planned. Needs Tesseract OCR, Bubblewrap sandbox, Wayland tray support. This is a meaningful contribution if you want to own it. See [Issue #2](https://github.com/goshtasb/OmniGlass/issues/2).
+**Linux** — planned. Needs Tesseract OCR, Bubblewrap sandbox, Wayland tray support. This is a meaningful contribution if you want to own it.
 
 ## Contributing: The Sandbox Challenge
 
@@ -178,12 +173,11 @@ Every plugin runs inside a kernel-level `sandbox-exec` profile. If you can read 
 Beyond the sandbox:
 
 - **🔌 Build a plugin.** Pick any API you use daily, make it an OmniGlass action. The [Plugin Developer Guide](docs/plugin-guide.md) gets you from zero to working plugin in 5 minutes.
-- **🪟 Own the Windows port.** It compiles. It needs a champion. ([Issue #1](https://github.com/goshtasb/OmniGlass/issues/1))
-- **🐧 Own the Linux port.** Tesseract + Bubblewrap + Wayland. ([Issue #2](https://github.com/goshtasb/OmniGlass/issues/2))
+- **🪟 Own the Windows port.** It compiles. It needs a champion.
+- **🐧 Own the Linux port.** Tesseract + Bubblewrap + Wayland.
 - **💬 Tell us what to build.** The [Discussions tab](https://github.com/goshtasb/OmniGlass/discussions) drives the roadmap. The features that get the most demand get built first.
 
 ## Community
-
 
 → **[Discussions](https://github.com/goshtasb/OmniGlass/discussions)** — feature requests, roadmap input
 

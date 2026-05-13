@@ -61,6 +61,24 @@ impl ActionResult {
             metadata: None,
         }
     }
+
+    /// Wrap raw text as a successful text result (used when JSON parse fails
+    /// but the model produced useful prose, e.g. local LLM explanations).
+    pub fn text(action_id: &str, content: &str) -> Self {
+        Self {
+            status: "success".to_string(),
+            action_id: action_id.to_string(),
+            result: ActionResultBody {
+                result_type: "text".to_string(),
+                text: Some(content.to_string()),
+                file_path: None,
+                command: None,
+                clipboard_content: None,
+                mime_type: None,
+            },
+            metadata: None,
+        }
+    }
 }
 
 // ── Pipeline ───────────────────────────────────────────────────────

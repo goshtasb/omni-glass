@@ -11,6 +11,7 @@
  */
 
 import { invoke } from "@tauri-apps/api/core";
+import { renderLocalModelsSection, attachLocalModelHandlers } from "./settings-local";
 
 interface ProviderInfo {
   id: string;
@@ -93,6 +94,9 @@ async function loadSettings(): Promise<void> {
         </div>
       </section>
 
+      <!-- Local Models Section (injected dynamically) -->
+      <div id="local-models-section"></div>
+
       <!-- Recognition Mode Section -->
       <section style="margin-bottom: 24px;">
         <h2 style="font-size: 14px; font-weight: 500; color: rgba(255,255,255,0.5);
@@ -164,6 +168,14 @@ async function loadSettings(): Promise<void> {
     if (radio) radio.checked = true;
   }
 
+  // Render local models section (async — fills in after main render)
+  const localSection = document.getElementById("local-models-section");
+  if (localSection) {
+    const localHtml = await renderLocalModelsSection();
+    localSection.innerHTML = localHtml;
+    attachLocalModelHandlers(loadSettings);
+  }
+
   // Wire up event handlers
   attachHandlers(config);
 }
@@ -192,6 +204,11 @@ function renderProviderCard(provider: ProviderInfo, config: ProviderConfig): str
         <span>Cost: ${escapeHtml(provider.costPerSnip)}</span>
       </div>
 
+      ${provider.id === "local" ? `
+      <div style="font-size:12px;color:rgba(255,255,255,0.5);">
+        No API key needed. Manage models in the Local Models section below.
+      </div>
+      ` : `
       <div style="display: flex; gap: 8px; align-items: center;">
         <input
           type="password"
@@ -241,6 +258,7 @@ function renderProviderCard(provider: ProviderInfo, config: ProviderConfig): str
           ${isConfigured ? "\u2713" : ""}
         </span>
       </div>
+      `}
     </div>
   `;
 }

@@ -12,6 +12,7 @@
 mod capture;
 mod commands;
 pub mod llm;
+mod local_model_commands;
 pub mod mcp;
 mod ocr;
 mod pipeline;
@@ -68,8 +69,10 @@ pub fn run() {
             commands::close_permission_prompt,
             commands::get_action_menu,
             commands::run_confirmed_command,
+            commands::summarize_command_output,
             commands::write_to_desktop,
             commands::write_file_to_path,
+            commands::open_file,
             commands::close_text_launcher,
             commands::close_tray_menu,
             commands::start_snip,
@@ -91,9 +94,25 @@ pub fn run() {
             // MCP approval commands (approval_commands.rs)
             mcp::approval_commands::get_pending_approvals,
             mcp::approval_commands::approve_plugin,
+            // Local model management (local_model_commands.rs)
+            local_model_commands::get_local_models,
+            local_model_commands::download_local_model,
+            local_model_commands::delete_local_model,
         ])
         .setup(|app| {
             log::info!("Omni-Glass starting up");
+
+            // Register local LLM state and preload model if one is downloaded.
+            // Load regardless of current provider — model stays in RAM so
+            // switching to "local" in Settings works instantly.
+            #[cfg(feature = "local-llm")]
+            {
+                app.manage(llm::local_state::LocalLlmState::new());
+                let handle_llm = app.handle().clone();
+                tauri::async_runtime::spawn(async move {
+                    auto_load_local_model(&handle_llm).await;
+                });
+            }
 
             // Warm up Vision Framework to avoid cold-start penalty on first snip
             let warm_start = std::time::Instant::now();
@@ -136,6 +155,42 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("Error running Omni-Glass");
+}
+
+/// Auto-load the default local model if one is downloaded.
+///
+/// Called at startup when LLM_PROVIDER=local. Scans the model registry
+/// for the first downloaded model and loads it into the LocalLlmState.
+#[cfg(feature = "local-llm")]
+async fn auto_load_local_model(app: &tauri::AppHandle) {
+    use llm::{model_manager, model_registry};
+
+    // Find the first downloaded model (prefer default)
+    let default = model_registry::default_model();
+    let model_to_load = if model_manager::is_model_downloaded(default) {
+        Some(default)
+    } else {
+        model_registry::available_models()
+            .iter()
+            .find(|m| model_manager::is_model_downloaded(m))
+    };
+
+    let model = match model_to_load {
+        Some(m) => m,
+        None => {
+            eprintln!("[LOCAL_LLM] No downloaded model found — download one in Settings");
+            return;
+        }
+    };
+
+    let path = model_manager::model_path(model);
+    eprintln!("[LOCAL_LLM] Auto-loading model: {} from {}", model.id, path.display());
+
+    let state = app.state::<llm::local_state::LocalLlmState>();
+    match state.load(&path, model.id).await {
+        Ok(()) => eprintln!("[LOCAL_LLM] Model loaded successfully: {}", model.id),
+        Err(e) => eprintln!("[LOCAL_LLM] Failed to auto-load model: {}", e),
+    }
 }
 
 /// Open (or focus) the text launcher window.

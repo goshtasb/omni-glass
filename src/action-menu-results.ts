@@ -205,7 +205,9 @@ export async function handleFileResult(result: ActionResult): Promise<void> {
       `;
 
       document.getElementById("btn-open-file")?.addEventListener("click", async () => {
-        try { await open(chosenPath); } catch { /* best effort */ }
+        try { await invoke("open_file", { filePath: chosenPath }); } catch (e) {
+          console.error("[ACTION] Failed to open file:", e);
+        }
         try { await invoke("close_action_menu"); } catch { /* closing */ }
       });
 

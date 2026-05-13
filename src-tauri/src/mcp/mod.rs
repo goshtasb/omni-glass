@@ -39,18 +39,20 @@ pub async fn execute_plugin_tool(
     input_text: &str,
     tool_description: Option<&str>,
     input_schema: Option<&serde_json::Value>,
+    #[allow(unused_variables)] app: Option<&tauri::AppHandle>,
 ) -> ActionResult {
     // Generate structured args for non-trivial schemas, fallback to {text} otherwise
     let arguments = match input_schema {
         Some(schema) if !crate::llm::plugin_args::is_trivial_schema(schema) => {
-            match crate::llm::plugin_args::generate_plugin_args(
+            let args_result = generate_args_for_provider(
                 action_id,
                 tool_description.unwrap_or(""),
                 schema,
                 input_text,
+                app,
             )
-            .await
-            {
+            .await;
+            match args_result {
                 Ok(args) => args,
                 Err(e) => {
                     log::warn!("[MCP] Args bridge failed, falling back to {{text}}: {}", e);
@@ -113,4 +115,38 @@ pub async fn execute_plugin_tool(
         }
         Err(e) => ActionResult::error(action_id, &format!("Failed to call plugin tool: {}", e)),
     }
+}
+
+/// Route args generation to the active provider (Anthropic or local).
+async fn generate_args_for_provider(
+    action_id: &str,
+    tool_description: &str,
+    schema: &serde_json::Value,
+    input_text: &str,
+    #[allow(unused_variables)] app: Option<&tauri::AppHandle>,
+) -> Result<serde_json::Value, String> {
+    #[cfg(feature = "local-llm")]
+    if let Some(app_handle) = app {
+        let provider = crate::settings_commands::resolve_provider();
+        if provider == "local" {
+            use tauri::Manager;
+            let state = app_handle.state::<crate::llm::local_state::LocalLlmState>();
+            return crate::llm::local::generate_plugin_args_local(
+                action_id,
+                tool_description,
+                schema,
+                input_text,
+                &state,
+            )
+            .await;
+        }
+    }
+
+    crate::llm::plugin_args::generate_plugin_args(
+        action_id,
+        tool_description,
+        schema,
+        input_text,
+    )
+    .await
 }

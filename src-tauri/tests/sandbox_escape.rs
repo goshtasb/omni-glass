@@ -18,7 +18,6 @@ use sandbox_helpers::{node_available, run_sandboxed, setup_test_dir, test_manife
 // ── Test 1: No network cannot connect ──────────────────────────────
 
 #[test]
-#[cfg(target_os = "macos")]
 fn no_network_cannot_connect() {
     if !node_available() {
         eprintln!("SKIP: node not available");
@@ -54,7 +53,6 @@ req.setTimeout(5000, () => { process.exit(1); });
 // ── Test 2: With network can connect ───────────────────────────────
 
 #[test]
-#[cfg(target_os = "macos")]
 fn with_network_can_connect() {
     if !node_available() {
         eprintln!("SKIP: node not available");
@@ -92,7 +90,6 @@ dns.lookup('httpbin.org', (err) => {
 // ── Test 3: Cannot read ~/.ssh ─────────────────────────────────────
 
 #[test]
-#[cfg(target_os = "macos")]
 fn cannot_read_home_ssh() {
     if !node_available() {
         eprintln!("SKIP: node not available");
@@ -140,7 +137,6 @@ try {{
 // ── Test 3b: Cannot read ~/.aws/credentials ─────────────────────────
 
 #[test]
-#[cfg(target_os = "macos")]
 fn cannot_read_aws_credentials() {
     if !node_available() {
         eprintln!("SKIP: node not available");
@@ -192,7 +188,6 @@ try {{
 // ── Test 4: Can read own directory ─────────────────────────────────
 
 #[test]
-#[cfg(target_os = "macos")]
 fn can_read_own_directory() {
     if !node_available() {
         eprintln!("SKIP: node not available");
@@ -234,7 +229,6 @@ try {{
 // ── Test 5: Read-only filesystem cannot write ──────────────────────
 
 #[test]
-#[cfg(target_os = "macos")]
 fn readonly_filesystem_cannot_write() {
     if !node_available() {
         eprintln!("SKIP: node not available");

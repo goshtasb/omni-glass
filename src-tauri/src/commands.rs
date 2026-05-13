@@ -157,9 +157,129 @@ pub async fn run_confirmed_command(command: String) -> Result<String, String> {
     if output.status.success() {
         log::info!("[EXECUTE] Command succeeded");
         Ok(stdout)
+    } else if !stdout.trim().is_empty() {
+        // Non-zero exit but stdout has content (e.g. `find` with permission errors).
+        // Return the valid output rather than discarding it.
+        log::info!("[EXECUTE] Command exited non-zero but produced output");
+        Ok(stdout)
     } else {
         log::warn!("[EXECUTE] Command failed: {}", stderr);
         Err(format!("Command failed:\n{}", stderr))
+    }
+}
+
+/// Tauri command: summarize raw shell output into a human-readable answer.
+///
+/// Called after `run_confirmed_command` completes. Sends the original user
+/// question + raw command output through the LLM for summarization.
+/// Routes to the active provider (local or cloud).
+#[tauri::command]
+pub async fn summarize_command_output(
+    app: tauri::AppHandle,
+    user_question: String,
+    command: String,
+    raw_output: String,
+) -> Result<String, String> {
+    use crate::llm::prompts_execute::{
+        build_summarize_message, SUMMARIZE_MAX_TOKENS, SUMMARIZE_OUTPUT_SYSTEM,
+    };
+
+    log::info!(
+        "[SUMMARIZE] question={} chars, output={} chars",
+        user_question.len(),
+        raw_output.len()
+    );
+
+    // Route to active provider
+    let provider = crate::settings_commands::resolve_provider();
+
+    #[cfg(feature = "local-llm")]
+    if provider == "local" {
+        return summarize_via_local(&app, &user_question, &command, &raw_output).await;
+    }
+    let _ = &app; // suppress unused warning when local-llm disabled
+
+    // For cloud providers: skip summarization only if output is short AND
+    // already human-readable (contains words, not just a raw number/data).
+    let is_short = raw_output.lines().count() <= 2 && raw_output.len() < 120;
+    let is_readable = raw_output.trim().chars().any(|c| c.is_alphabetic());
+    if is_short && is_readable {
+        return Ok(raw_output);
+    }
+
+    let api_key = std::env::var("ANTHROPIC_API_KEY").unwrap_or_default();
+    if api_key.is_empty() {
+        return Ok(raw_output);
+    }
+
+    let user_message = build_summarize_message(&user_question, &command, &raw_output);
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post("https://api.anthropic.com/v1/messages")
+        .header("x-api-key", &api_key)
+        .header("anthropic-version", "2023-06-01")
+        .header("content-type", "application/json")
+        .json(&serde_json::json!({
+            "model": llm::prompts::MODEL,
+            "max_tokens": SUMMARIZE_MAX_TOKENS,
+            "system": SUMMARIZE_OUTPUT_SYSTEM,
+            "messages": [{"role": "user", "content": user_message}]
+        }))
+        .send()
+        .await
+        .map_err(|e| format!("Summarize API call failed: {}", e))?;
+
+    if !resp.status().is_success() {
+        log::warn!("[SUMMARIZE] API error, falling back to raw output");
+        return Ok(raw_output);
+    }
+
+    let body = resp.text().await.map_err(|e| e.to_string())?;
+    let parsed: serde_json::Value =
+        serde_json::from_str(&body).map_err(|e| e.to_string())?;
+    let text = parsed
+        .get("content")
+        .and_then(|c| c.as_array())
+        .and_then(|arr| arr.first())
+        .and_then(|b| b.get("text"))
+        .and_then(|t| t.as_str())
+        .unwrap_or(&raw_output);
+
+    log::info!("[SUMMARIZE] Summary: {} chars", text.len());
+    Ok(text.to_string())
+}
+
+/// Summarize command output using the local LLM.
+#[cfg(feature = "local-llm")]
+async fn summarize_via_local(
+    app: &tauri::AppHandle,
+    user_question: &str,
+    command: &str,
+    raw_output: &str,
+) -> Result<String, String> {
+    use tauri::Manager;
+    let state = app.state::<llm::local_state::LocalLlmState>();
+
+    let prompt = format!(
+        "<|im_start|>system\n{}<|im_end|>\n<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n",
+        "You answer the user's question using command output. Give a direct, concise answer (1-3 sentences). Include specific numbers. Convert bytes to GB where appropriate. No JSON, no code blocks, no mentioning commands.",
+        format!(
+            "User asked: {}\nCommand ran: {}\nOutput:\n{}",
+            user_question, command, &raw_output[..3000.min(raw_output.len())]
+        ),
+    );
+
+    match state.generate(&prompt, 256, None).await {
+        Ok(summary) => {
+            let clean = summary.trim().to_string();
+            log::info!("[SUMMARIZE_LOCAL] {} chars", clean.len());
+            Ok(clean)
+        }
+        Err(e) => {
+            log::warn!("[SUMMARIZE_LOCAL] Failed: {} — returning raw output", e);
+            Ok(raw_output.to_string())
+        }
     }
 }
 
@@ -251,4 +371,22 @@ pub fn write_file_to_path(file_path: String, content: String) -> Result<String, 
 
     log::info!("[EXPORT] Wrote file: {}", file_path);
     Ok(file_path)
+}
+
+/// Tauri command: open a file with the system default application.
+///
+/// Uses macOS `open` command. Only allows paths under $HOME.
+#[tauri::command]
+pub fn open_file(file_path: String) -> Result<(), String> {
+    if !safety::command_check::is_path_safe(&file_path) {
+        return Err("Unsafe file path".to_string());
+    }
+
+    std::process::Command::new("open")
+        .arg(&file_path)
+        .spawn()
+        .map_err(|e| format!("Failed to open file: {}", e))?;
+
+    log::info!("[EXPORT] Opened file: {}", file_path);
+    Ok(())
 }

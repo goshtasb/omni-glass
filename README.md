@@ -41,7 +41,7 @@ Every AI tool on your desktop does the same thing: you show it your screen, and 
 
 ## How It Works
 
-You snip your screen → native OCR extracts text on-device (Apple Vision on macOS, Windows OCR on Windows — no images leave your machine) → text goes to an LLM (Claude Haiku or Gemini Flash) → the LLM classifies the content and returns a menu of actions → you click an action → it executes through the built-in handler or a sandboxed MCP plugin.
+You snip your screen → native OCR extracts text on-device (Apple Vision on macOS, Windows OCR on Windows — no images leave your machine) → text goes to an LLM (Claude Haiku, Gemini Flash, or Qwen-2.5 running locally) → the LLM classifies the content and returns a menu of actions → you click an action → it executes through the built-in handler or a sandboxed MCP plugin.
 
 Two inputs (snip or type), one pipeline, same plugin system.
 
@@ -49,8 +49,7 @@ Two inputs (snip or type), one pipeline, same plugin system.
 |---|---|
 | Claude Haiku | Cloud |
 | Gemini Flash | Cloud |
-
-**Local LLM (in progress):** Qwen-2.5 via llama.cpp is implemented on the [feat/phase-3b-local-llm](https://github.com/goshtasb/OmniGlass/tree/feat/phase-3b-local-llm) branch and will merge to main shortly. See [ROADMAP.md](ROADMAP.md) for status.
+| **Qwen-2.5-3B** | **Local (llama.cpp), fully offline** |
 
 No OmniGlass servers. Your key talks directly to the provider. We never see your data.
 
@@ -154,6 +153,8 @@ OmniGlass is a **Zero-Trust Execution Engine**.
 
 ## Quick Start
 
+> **No API key?** OmniGlass can run Qwen-2.5-3B locally via llama.cpp, fully offline — no key, no network.
+
 **macOS** (primary platform — requires macOS 12+, Rust, Node.js 18+):
 
 ```bash
@@ -164,7 +165,7 @@ npm run tauri dev
 ```
 
 1. Click the OmniGlass icon in your menu bar
-2. **Settings** → paste your Anthropic or Google API key
+2. **Settings** → paste your Anthropic or Google API key, or select **Local** and download the Qwen model
 3. **Snip Screen** → draw a box → see the action menu → click an action
 
 Pre-built `.dmg` installer coming soon.

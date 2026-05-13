@@ -1,0 +1,13 @@
+{
+  "id": "com.omni-glass.slack-webhook",
+  "name": "Slack Webhook",
+  "version": "1.0.0",
+  "description": "Send snipped content to a Slack channel via incoming webhook",
+  "runtime": "node",
+  "entry": "index.js",
+  "permissions": {
+    "clipboard": false,
+    "network": ["hooks.slack.com"],
+    "environment": ["SLACK_WEBHOOK_URL"]
+  }
+}

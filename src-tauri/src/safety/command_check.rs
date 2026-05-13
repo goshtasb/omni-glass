@@ -94,8 +94,30 @@ pub fn is_command_safe(command: &str) -> CommandCheck {
 }
 
 /// Validate that a file path doesn't contain traversal attacks.
+///
+/// Allows absolute paths under the user's home directory (save dialogs
+/// return absolute paths like `/Users/name/Downloads/file.csv`).
+/// Blocks `..` traversal and paths outside of `$HOME`.
 pub fn is_path_safe(path: &str) -> bool {
-    !path.contains("..") && !path.starts_with('/')
+    if path.contains("..") {
+        return false;
+    }
+
+    // Allow absolute paths under the user's home directory
+    if let Some(home) = dirs::home_dir() {
+        let home_str = home.to_string_lossy();
+        if path.starts_with(home_str.as_ref()) {
+            return true;
+        }
+    }
+
+    // Allow relative paths (e.g. "export.csv" for Desktop write)
+    if !path.starts_with('/') {
+        return true;
+    }
+
+    // Block absolute paths outside $HOME (e.g. /etc/passwd)
+    false
 }
 
 #[cfg(test)]
@@ -155,9 +177,23 @@ mod tests {
 
     #[test]
     fn path_traversal_check() {
+        // Relative paths are fine
         assert!(is_path_safe("export.csv"));
         assert!(is_path_safe("table_data_20260220.csv"));
+
+        // Absolute paths under $HOME are fine (save dialog returns these)
+        if let Some(home) = dirs::home_dir() {
+            let home_path = format!("{}/Downloads/export.csv", home.display());
+            assert!(is_path_safe(&home_path));
+            let desktop_path = format!("{}/Desktop/data.csv", home.display());
+            assert!(is_path_safe(&desktop_path));
+        }
+
+        // Traversal attacks blocked
         assert!(!is_path_safe("../../etc/passwd"));
+
+        // Absolute paths outside $HOME blocked
         assert!(!is_path_safe("/etc/shadow"));
+        assert!(!is_path_safe("/tmp/evil.sh"));
     }
 }
